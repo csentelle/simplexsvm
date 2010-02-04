@@ -1,12 +1,10 @@
 function [alpha, b, iter, t, gcache, m] = quadsimplex12(P, T, C, ktype, lambda)
 
-% This version allows block gradient projection steps!
-
 	global m_P;
 	global m_T;
 	global m_C;
 	global m_fcache;
-	global m_Pr;
+	global m_beta;
 	global m_alpha;
 	global m_ktype;
     global m_lambda;
@@ -16,11 +14,10 @@ function [alpha, b, iter, t, gcache, m] = quadsimplex12(P, T, C, ktype, lambda)
     global m_R;
     global idx_b;
     global idx_nb;
-    
+    global eps;
     
     Q = zeros(length(T), length(T));
-    
-    
+        
     N = length(T);
 	if (ktype == 0),
 
@@ -45,9 +42,8 @@ function [alpha, b, iter, t, gcache, m] = quadsimplex12(P, T, C, ktype, lambda)
 	m_alpha = zeros(length(T), 1);
 	m_svtype = zeros(length(T), 1);
     
-	% Allocate space for the Lagrange multipliers for the constraints
-	m_Pr = [zeros(length(T) + 1, 1)];
-	% Initial gradient is equal to -Y
+	
+    % Initial gradient is equal to -Y
 	m_fcache = -ones(size(T));
 	gcache = m_fcache;
     m = [];
@@ -62,7 +58,7 @@ function [alpha, b, iter, t, gcache, m] = quadsimplex12(P, T, C, ktype, lambda)
       
     iter = 0;
     
-    m_Pr(1) = -m_T(1);
+    m_beta = -m_T(1);
     updateCache;
     m_alpha(1) = 1e-12;
     m_svtype(1) = 1;
@@ -78,8 +74,8 @@ function [alpha, b, iter, t, gcache, m] = quadsimplex12(P, T, C, ktype, lambda)
     [min_g, idx] = min(m_fcache);
     
     tic; 
-    
-	while (min_g < -1e-1 )
+    eps = 1e-6;
+	while (min_g < -eps )
         
         
         iter = iter + 1;
@@ -89,7 +85,7 @@ function [alpha, b, iter, t, gcache, m] = quadsimplex12(P, T, C, ktype, lambda)
 
         [min_g, idx] = min(m_fcache);
         
-        disp(['iteration = ', num2str(iter), ' SVs = ', num2str(sum(m_alpha > 0))]);
+        disp(['iteration = ', num2str(iter), ' min_g = ', num2str(min_g), ' SVs = ', num2str(sum(m_alpha > 0))]);
 
     end;
     
@@ -97,7 +93,7 @@ function [alpha, b, iter, t, gcache, m] = quadsimplex12(P, T, C, ktype, lambda)
 
     alpha = m_alpha;
 
-    b = m_Pr(1);
+    b = -m_beta;
     
 
 function takeStep(idx)
@@ -105,34 +101,24 @@ function takeStep(idx)
 	global m_T;
 	global m_C;
 	global m_fcache;
-	global m_Pr;
+	global m_beta;
 	global m_alpha;
     global iter;
     global Q;
     global m_svtype;
     global m_R;
-    global idx_b;
     global idx_nb;
+    global eps;
     
-    eps = 1e-1;
     
     bSlack = 0;
-    
-    
-    h = zeros(size(m_T));
-    g = zeros(size(m_Pr));
         
-    % Compute the sub-Q column
-    q = zeros(length(idx_nb), 1);
-    
-    for i = 1:length(q),
-        q(i) = Q(idx_nb(i), idx);
-    end;
-  
+    h = zeros(size(m_T));
+    gb = 0;
     gamma = 0;
-    
-    % First, we are adding a new variable to the basis, identified by idx
-    
+      
+    q = Q(idx_nb, idx);
+        
     % We are adding a support vector, alpha is increased from zero.
     if (m_svtype(idx) == 0)
     
@@ -145,18 +131,10 @@ function takeStep(idx)
         %
         % Solve sub-problem
         %
-        
-        % Solve the sub-problem
-        [ht,gt] = solveSub(Q(idx_nb,idx_nb), m_T(idx_nb), q, m_T(idx));
-                                  
-        % Add the solution back into the larger matrix
-        h(idx_nb) = ht;
-        g(1) = gt;
-        
-        g(idx_b + 1) = Q(idx_b, idx) - m_T(idx_b)'*g(1) - Q(idx_b, idx_nb) * h(idx_nb)';
-                        
+        [h(idx_nb), gb] = solveSub(Q(idx_nb,idx_nb), m_T(idx_nb), q, m_T(idx));
+                                                                  
         % Compute gamma
-        gamma = Q(idx, idx) - m_T(idx) * g(1) - g(idx + 1) - Q(idx, idx_nb) * h(idx_nb)';
+        gamma = Q(idx, idx) - m_T(idx) * gb - Q(idx, idx_nb) * h(idx_nb)';
         
     elseif (m_svtype(idx) == 2)
         
@@ -172,30 +150,20 @@ function takeStep(idx)
         %
         % Solve sub-problem
         %
-        [ht, gt] = solveSub(Q(idx_nb,idx_nb), m_T(idx_nb), -q, -m_T(idx));
-        
-        
-        % Add the solution back into the larger matrix
-        h(idx_nb) = ht;
-        g(1) = gt;
-        
-        g(idx_b+1) = -Q(idx_b, idx) - m_T(idx_b)'*g(1) - Q(idx_b, idx_nb) * h(idx_nb)';
-                        
-        gamma = -g(idx + 1);
+        [h(idx_nb), gb] = solveSub(Q(idx_nb,idx_nb), m_T(idx_nb), -q, -m_T(idx));
+                                        
+        gamma = Q(idx,idx) + m_T(idx) * gb + Q(idx, idx_nb) * h(idx_nb)';
+
     end;
     
     m_svtype(idx) = 1;
     idx_nb = [idx_nb; idx];
     m_R = UpdateCholesky(m_R, -Q(idx_nb, idx_nb), m_T(idx_nb));
-        
-    
+            
     while (abs(m_fcache(idx)) > eps)
     
         iter = iter + 1;
-        % Now we need to determine who pivots, and how.
-        
-        % Augment the h vector for non-bound support vectors
-        
+                
         idxh = find(h > 0);
         idxh2 = find(-h > 0);
         [theta, idxr] = min([m_alpha(idxh)'./h(idxh),(m_C - m_alpha(idxh2))'./-h(idxh2)]);
@@ -217,7 +185,7 @@ function takeStep(idx)
            idx_nb(idxir) = [];
            
            % a value is leaving the basis
-           m_Pr = m_Pr - theta * g;
+           m_beta = m_beta - theta * gb;
            m_alpha = m_alpha - theta * h';
            m_fcache(idx) = m_fcache(idx) - theta * gamma;
                       
@@ -225,7 +193,7 @@ function takeStep(idx)
 		else
 	           
            theta = m_fcache(idx) / gamma;
-           m_Pr = m_Pr - theta * g;
+           m_beta = m_beta - theta * gb;
            m_alpha = m_alpha - theta * h';
            m_fcache(idx) = 0.0;
  
@@ -241,7 +209,6 @@ function takeStep(idx)
         if (abs(m_fcache(idx)) <= eps) break; end;        
         
         h = zeros(size(m_T));
-        g = zeros(size(m_Pr));
         
         e = zeros(length(m_T),1);
         e(idx) = 1;
@@ -249,27 +216,12 @@ function takeStep(idx)
                 
         if (~bSlack)
                        
-            [ht,gt] = solveSub(Q(idx_nb,idx_nb), m_T(idx_nb), e(idx_nb), 0);
-                        
-            g(1) = gt;
-            h(idx_nb) = ht;
-  
-            g(idx_b + 1) = e(idx_b) - m_T(idx_b)' * g(1) - Q(idx_b, idx_nb) * h(idx_nb)';
-                        
-            % Compute gamma
+            [h(idx_nb),gb] = solveSub(Q(idx_nb,idx_nb), m_T(idx_nb), e(idx_nb), 0);                        
             gamma = -1;
             
         else
             
-            [ht,gt] = solveSub(Q(idx_nb,idx_nb), m_T(idx_nb), -e(idx_nb), 0);
-
-            g(1) = gt;
-            h(idx_nb) = ht;     
-            
-            
-            g(idx_b + 1) = -e(idx_b) - m_T(idx_b)' * g(1) - Q(idx_b, idx_nb) * h(idx_nb)';
-            g(idx + 1) = 1;
-                        
+            [h(idx_nb),gb] = solveSub(Q(idx_nb,idx_nb), m_T(idx_nb), -e(idx_nb), 0);                                    
             gamma = -1;
             
         end;
@@ -393,22 +345,23 @@ function [h, g] = solveSub(Q, y, q, r)
 function updateCache()
 
 global m_alpha;
+global m_beta;
 global m_svtype;
 global m_fcache;
 global m_T;
-global m_Pr;
 global Q;
     
     m_fcache(:) = 0;
     
     idxzero = find(m_svtype == 0);
+    idxs = find(m_svtype == 1);
     idxC = find(m_svtype == 2);
-    idxgzero = find(m_svtype == 1 | m_svtype == 2);
-        
-    m_fcache(idxzero) = -ones(length(idxzero),1) - m_Pr(1) * m_T(idxzero)' - ...
-                         m_Pr(idxzero + 1) - Q(idxzero, idxgzero) * m_alpha(idxgzero);
     
-    m_fcache(idxC) = -m_Pr(idxC + 1);
+    m_fcache(idxzero) = -ones(length(idxzero),1) - m_beta * m_T(idxzero)'  - ...
+                        Q(idxzero, idxs) * m_alpha(idxs) - Q(idxzero, idxC) * m_alpha(idxC);
+    
+    m_fcache(idxC) = ones(length(idxC),1) + m_beta * m_T(idxC)' + ...
+                        Q(idxC, idxs) * m_alpha(idxs) + Q(idxC, idxC) * m_alpha(idxC);
     
     
 
