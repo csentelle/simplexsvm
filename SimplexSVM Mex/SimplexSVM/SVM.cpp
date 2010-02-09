@@ -1,10 +1,8 @@
 #include ".\svm.h"
-//#include "windows.h"
 #include <algorithm>
 #include "time.h"
 #include <functional>
 #include "stdlib.h"
-
 
 #undef PROFILE
 //#define PROFILE	&Profile
@@ -100,17 +98,11 @@ void SVM::train(const Array<double, 2>& P,
     if ((working_size > fcache.size()) || (working_size <= 0))
         working_size = fcache.size();
 
-
-    //
-	// Set the first alpha value to 1e-12 as an initial feasible solution. 
-	// This will start the algorithm. I need to do more analysis to see if 
-	// this is a viable solution.
-	//
 	
     m_os << infolevel(7) << "P = " << endl << P << endl;
     m_os << infolevel(7) << "T = " << endl << T << endl;
 
-    int initS = 0; //rand() % T.size();
+    int initS = 0; 
     Pr(0) = -T(initS);
 
 	alpha(initS) = 1e-12;
@@ -119,18 +111,12 @@ void SVM::train(const Array<double, 2>& P,
 
     reinitializeCache(fcache, upperfcache, T, alpha, Pr);
 
-    //m_R(0, 0) = sqrt(m_kernel[0][0]);
-
-    //m_os << "R = " << m_R << endl;
-
     m_R(0, 0) = sqrt(m_kernel.getQss(initS));
 
-    m_os << "R = " << m_R << endl;
-
-    //flush(*m_os);
 
     m_os << infolevel(7) << "fcache = " << fcache << endl;
-    //
+
+	//
     // Find the next index to enter the cache. Note that the 
     // minIndex function returns a TinyVector, of which we 
     // want the first value.
@@ -154,73 +140,62 @@ void SVM::train(const Array<double, 2>& P,
                              << " idx = " << idx << endl;
 
 
-		BEGIN_PROF("Take Step");
         // Perform pivoting on the pivot element
         takeStep(alpha, idx, fcache, T, Pr, upperfcache, iter);
 
-		NEXT_PROF("UpdateCacheStrategy");
-        //[min_g, idx] = updateCacheStrategy(nWorkingSize);
-        idx = updateCacheStrategy(working_size, T, alpha, Pr, fcache, upperfcache, min_g);
+
+		idx = updateCacheStrategy(working_size, T, alpha, Pr, fcache, upperfcache, min_g);
         
-		END_PROF();
 		
-   //     if (min_g > -tol)
-   //     {
-			//BEGIN_PROF("min_g > -tol");
-   //        //m_os << infolevel(0) << "Reinitializing cache: min_g = " 
-   //        //      << min_g << " idx = " << idx << endl;
-   //         
-   //         m_workset.erase(m_workset.begin(), m_workset.end());
-   //         
-   //         idx = updateCacheStrategy(working_size, 
-   //                                   T, 
-   //                                   alpha, 
-   //                                   Pr, fcache, upperfcache, min_g);
+        //if (min_g > -tol)
+        //{
+        //   //m_os << infolevel(0) << "Reinitializing cache: min_g = " 
+        //   //      << min_g << " idx = " << idx << endl;
+        //    
+        //    m_workset.erase(m_workset.begin(), m_workset.end());
+        //    
+        //    idx = updateCacheStrategy(working_size, 
+        //                              T, 
+        //                              alpha, 
+        //                              Pr, fcache, upperfcache, min_g);
 
-			//END_PROF();
-   //         if (min_g > -tol)
-   //         {
-			//	BEGIN_PROF("min_g > -tol Stage 2");
-   //             m_fcache_indices.erase(m_fcache_indices.begin(),
-   //                                    m_fcache_indices.end());
+        //    if (min_g > -tol)
+        //    {
+        //        m_fcache_indices.erase(m_fcache_indices.begin(),
+        //                               m_fcache_indices.end());
 
-   //             for (int i = 0; i < fcache.size(); i++)
-   //                 m_fcache_indices.push_back(i);
+        //        for (int i = 0; i < fcache.size(); i++)
+        //            m_fcache_indices.push_back(i);
 
-   //             m_workset.erase(m_workset.begin(), m_workset.end());
-   //             
-   //             idx = updateCacheStrategy(working_size, 
-   //                                     T, 
-   //                                     alpha, 
-   //                                     Pr, fcache, upperfcache, min_g);
+        //        m_workset.erase(m_workset.begin(), m_workset.end());
+        //        
+        //        idx = updateCacheStrategy(working_size, 
+        //                                T, 
+        //                                alpha, 
+        //                                Pr, fcache, upperfcache, min_g);
 
-			//	END_PROF();
-   //         }
-   //     }
+        //    }
+        //}
 
-   //     // Perform shrinking
-   //     else if (iter % shrinking_iter == 0)
-   //     {
-			//BEGIN_PROF("Shrinking");
+        //// Perform shrinking
+        //else if (iter % shrinking_iter == 0)
+        //{
 
-   //         reinitializeCache(fcache, upperfcache, T, alpha, Pr);
+        //    reinitializeCache(fcache, upperfcache, T, alpha, Pr);
 
-   //         for (int i = 0; i < m_fcache_indices.size(); i++)
-   //         {
+        //    for (int i = 0; i < m_fcache_indices.size(); i++)
+        //    {
 
-   //             if (fcache(m_fcache_indices[i]) > -1e-3)
-   //             {
-   //                 m_fcache_indices.erase(remove(m_fcache_indices.begin(),
-   //                                               m_fcache_indices.end(),
-   //                                               m_fcache_indices[i]),
-   //                                        m_fcache_indices.end());
+        //        if (fcache(m_fcache_indices[i]) > -1e-3)
+        //        {
+        //            m_fcache_indices.erase(remove(m_fcache_indices.begin(),
+        //                                          m_fcache_indices.end(),
+        //                                          m_fcache_indices[i]),
+        //                                   m_fcache_indices.end());
 
-   //             }
-   //         }
-			//END_PROF();
-
-   //     }
-
+        //        }
+        //    }
+        //}
     }
 
 
@@ -228,8 +203,7 @@ void SVM::train(const Array<double, 2>& P,
     t = ((double)clock() - (double)ts) / (double)CLOCKS_PER_SEC;
 
     // Compute B
-    // We are computing B according to:
-    
+    // We are computing B according to:    
     b = 0.0;
 
     // First find any support vector that is not a bound support vector
@@ -248,7 +222,6 @@ void SVM::train(const Array<double, 2>& P,
         }
     }
 
-    //m_os << infolevel(0) << "Cache count = " << m_kernel.m_nCacheCount << endl;
 
 
 	//////END_PROF();
@@ -264,16 +237,12 @@ void SVM::takeStep(Array<double, 1>& alpha,
               Array<double, 1>& upperfcache,
 			  int& iter)
 {
-    //BEGIN_PROF("SVM::takestep");
     double eps = 1e-15;
     bool bSlack = false;
     double gamma = 0.0;
     int N = T.size();
 
     Array<double, 1> h = m_hS(Range(0, m_idxnb.size())); 
-
-    //Array<double, 1> g(Pr.size());
-    //Array<double, 1> g(m_idxb.size() + 1);
     Array<double, 1> g = m_gS(Range(0, m_idxb.size()));
 
     for (int kidx = 0; kidx < h.size(); kidx++)
@@ -285,14 +254,12 @@ void SVM::takeStep(Array<double, 1>& alpha,
     // Find the indices for bound, non-bound support vectors. Note that 
     // this, in reality, needs to be moved to another section.
         
-    //Array<double, 1> q(static_cast<int>(m_idxnb.size()));
     Array<double, 1> q = m_qS(Range(0, m_idxnb.size() - 1));
 
     m_os << infolevel(2) << "Pivoting on index: " << idx << endl;
 
     for (int i = 0; i < q.size(); i++)
     {
-        //q(i) = -m_kernel[m_idxnb[i]][idx];
         q(i) = -m_kernel(idx, m_idxnb[i]);
     }
 
@@ -303,19 +270,14 @@ void SVM::takeStep(Array<double, 1>& alpha,
 
     m_os << infolevel(4) << "m_status = " << m_status(idx) << endl;
 
-	//NEXT_PROF("Solve sub-problem");
     if (m_status(idx) == 0)
     {    
 
         m_os << infolevel(3) << "Increasing alpha from 0" << endl;
 
-
-	    //BEGIN_PROF(" Solve sub-problem");
-
         //
         // Solve sub-problem
         //
-        //Array<double, 1> ht(static_cast<int>(m_idxnb.size()));
         Array<double, 1> ht = m_htS(Range(0, m_idxnb.size() - 1));
         
         double gt;
@@ -327,7 +289,6 @@ void SVM::takeStep(Array<double, 1>& alpha,
                         ht,
                         gt);
 
-		//NEXT_PROF("Assign results");
         
         //       
         //  We set the h value for the slack variable already in the data
@@ -342,32 +303,8 @@ void SVM::takeStep(Array<double, 1>& alpha,
         m_os << infolevel(4) << "gt = " << gt << endl;
         m_os << infolevel(4) << "ht = " << h << endl;
 
-        //g(idx_b + 1) = Q(idx_b, idx) - m_T(idx_b)'*g(1) - Q(idx_b, idx_nb)* h(idx_nb)';
-        
-        //Compute the remaining g-values
-        //for (size_t i = 0; i < m_idxb.size(); i++)
-        //{
-        //    //g(m_idxb[i] + 1) = -m_kernel[idx][m_idxb[i]] 
-        //    //     - T(m_idxb[i]) * g(0);
-
-        //    g(i + 1) = -m_kernel[idx][m_idxb[i]] 
-        //         - T(m_idxb[i]) * g(0);
-
-        //     for (size_t k = 0; k < m_idxnb.size(); k++)
-        //     {
-        //          //g(m_idxb[i] + 1) +=  
-        //          //    m_kernel[m_idxnb[k]][m_idxb[i]] * h(k);
-
-        //          g(i + 1) +=  
-        //              m_kernel[m_idxnb[k]][m_idxb[i]] * h(k);
-
-        //     }
-
-        //}
-
         m_os << infolevel(4) << "g = " << g << endl;
 
-		//NEXT_PROF("Compute gamma");
 
         //
         // Compute gamma. Note that we don't actually need the term
@@ -375,47 +312,36 @@ void SVM::takeStep(Array<double, 1>& alpha,
         // a non-support vector and g is only non-zero for bound 
         // support vectors (m_status == 2)
         //
-        gamma = -m_kernel.getQss(idx) - T(idx) * g(0); //- g(idx + 1);
-               
+        gamma = -m_kernel.getQss(idx) - T(idx) * g(0); 
+
         for (size_t k = 0; k < m_idxnb.size(); k++)
         {
-            //gamma += m_kernel[m_idxnb[k]][idx] * 
-            //    h(k);
 			gamma += m_kernel(m_idxnb[k],idx) * h(k);
         }
         
         m_os << infolevel(4) << "gamma = " << gamma << endl;
 
-		//END_PROF();
     }            
     else if (m_status(idx) == 2)
     {
      
         m_os << infolevel(3) << "alpha(idx) = C" << endl;
 
-		//BEGIN_PROF("ALPHA = c");
 
         bSlack = true;
                 
                 
         // Solve sub-problem
-        //Array<double, 1> ht(static_cast<int>(m_idxnb.size()));
         Array<double, 1> ht = m_htS(Range(0, m_idxnb.size() - 1));
-
         double gt;
 
-        // Form the negative of q.
-        //Array<double, 1> qs(q.shape());
-        //qs = -q;
-        q = -q;
-
+		q = -q;
         solveSubProblem(m_R, 
                         q,
                         -T(idx),
                         T,
                         ht,
                         gt);
-        
         q = -q;
 
         // We set the h value for the slack variable already in the data
@@ -429,68 +355,21 @@ void SVM::takeStep(Array<double, 1>& alpha,
         m_os << infolevel(4) << gt << endl;
         m_os << infolevel(4) << h << endl;
         
-
-        //g(idx_b+1) = -Q(idx_b, idx) - m_T(idx_b)'*g(1) - Q(idx_b, idx_nb) * h(idx_nb)';
-        
-
-        //Compute the remaining g-values
-        //for (size_t i = 0; i < m_idxb.size(); i++)
-        //{
-        //    //g(m_idxb[i] + 1) = m_kernel[idx][m_idxb[i]]
-        //    //     - T(m_idxb[i]) * g(0);
-        //          
-        //    g(i + 1) = m_kernel[idx][m_idxb[i]]
-        //         - T(m_idxb[i]) * g(0);
-
-        //     for (size_t k = 0; k < m_idxnb.size(); k++)
-        //     {             
-        //          //g(m_idxb[i] + 1) += 
-        //          //    m_kernel[m_idxnb[k]][m_idxb[i]] * h(k);
-        //          g(i + 1) += 
-        //              m_kernel[m_idxnb[k]][m_idxb[i]] * h(k);
-
-        //     }
-
-        //     if (m_idxb[i] == idx)
-        //         gamma = -g(i + 1);
-
-        //}
-    
-        gamma = m_kernel.getQss(idx) - T(idx) * g(0); //- g(idx + 1);
+   
+        gamma = -m_kernel.getQss(idx) + T(idx) * g(0); 
                
         for (size_t k = 0; k < m_idxnb.size(); k++)
         {
-            //gamma += m_kernel[m_idxnb[k]][idx] * 
-            //    h(k);
-            gamma += m_kernel(m_idxnb[k],idx) * 
-                h(k);
+            gamma -= m_kernel(m_idxnb[k],idx) * h(k);
         }
-    
-        gamma = -gamma;
-        
-        m_os << infolevel(4) << "g = " << g << endl;
-        
-        //gamma = -g(idx + 1);
-        m_os << infolevel(4) << "gamma = " << gamma << endl;
 
-		//END_PROF();
+		m_os << infolevel(4) << "gamma = " << gamma << endl;
        
     }
     
-
     bool bAddedIndex = false;
-
-    // m_changed.clear();
-    //m_changed.insert(m_changed.begin(), m_idxnb.begin(), m_idxnb.end());
-
-    //copy(m_idxnb.begin(), m_idxnb.end(), back_inserter(m_changed));
-    //m_changed.push_back(idx);
-
-    //m_kernel.cacheColumn(idx);
     double gk = 0.0;
         
-	//NEXT_PROF("While loop");
-
     while (abs(fcache(idx)) > eps)
     {
         // 
@@ -559,11 +438,6 @@ void SVM::takeStep(Array<double, 1>& alpha,
 
             // a value is leaving the basis
             Pr(0) = Pr(0) - theta * g(0);
-            //Pr(idx + 1) = Pr(idx + 1) - theta * gk;
-
-            //for (int k = 1; k < g.size(); k++)
-            //    Pr(m_idxb[k - 1] + 1) = Pr(m_idxb[k - 1] + 1) - theta * g(k);
-
 
             if (!bAddedIndex)
             {
@@ -594,25 +468,12 @@ void SVM::takeStep(Array<double, 1>& alpha,
                 // Update the upper bound cache
                 for (int k = 0; k < upperfcache.size(); k++)
                     upperfcache(k) += m_kernel(idxr,k) * m_C;
-                    //upperfcache(k) += m_kernel[idxr][k] * m_C;
 
             }
             else
             {
                 m_status(idxr) = 0;
             }
-            //else
-            //{
-            //    if (idx == idxr)
-            //    {
-            //        //m_idxb.erase(remove(m_idxb.begin(), 
-            //        //                    m_idxb.end(), 
-            //        //                    idx), 
-            //        //            m_idxb.end());
-
-            //        m_status(idxr) = 0;
-            //    }
-            //}
 
             if ( (idxr != idx) || 
                 ((idxr == idx) && (bAddedIndex == true)) )
@@ -636,10 +497,8 @@ void SVM::takeStep(Array<double, 1>& alpha,
                 reduceCholFactor(idx_pos);
 
                 m_os << infolevel(6) << "Reduced Cholesky = " << endl;
-                m_os << infolevel(6) << m_R << endl;
-            
+                m_os << infolevel(6) << m_R << endl;            
 
-                
                 // Erase the value from the non-bound values
                 if (vIter != m_idxnb.end())
                 {
@@ -654,11 +513,6 @@ void SVM::takeStep(Array<double, 1>& alpha,
                     m_os << warning() << "Invalid index removed" << endl;
                 }
 
-                // Really only need to do this if it is a non-SV
-                //if (-h(idxh) <= 0)
-                //{
-                //    fcache = initializeNonSVCache(fcache, T, alphaOld, prOld, idxr);
-                //}
             }
            
         }
@@ -672,10 +526,6 @@ void SVM::takeStep(Array<double, 1>& alpha,
             
             // a value is leaving the basis
             Pr(0) = Pr(0) - theta * g(0);
-            //Pr(idx + 1) = Pr(idx + 1) - theta * gk;
-
-            //for (int k = 1; k < g.size(); k++)
-            //    Pr(m_idxb[k - 1] + 1) = Pr(m_idxb[k - 1] + 1) - theta * g(k);
 
             if (!bAddedIndex)
             {
@@ -704,10 +554,6 @@ void SVM::takeStep(Array<double, 1>& alpha,
             {
                 // In anticipation, go ahead and remove this from the bound 
                 // set.
-                //vector<int>::iterator vIter = 
-                //    find(m_idxb.begin(), m_idxb.end(), idx);
-
-                //m_idxb.erase(vIter);
                 m_idxb.erase(remove(m_idxb.begin(), 
                                     m_idxb.end(), 
                                     idx), 
@@ -716,9 +562,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
                 // Remove values from upper cache
                 for (int k = 0; k < upperfcache.size(); k++)
                     upperfcache(k) -= m_kernel(idx,k) * m_C;
-                    //upperfcache(k) -= m_kernel[idx][k] * m_C;
 
-                //m_os << infolevel(0) << "Removed " << idxr << " from bound set." << endl;
 
             }
 
@@ -729,7 +573,8 @@ void SVM::takeStep(Array<double, 1>& alpha,
 
                 // Update the cholesky factorization
                 addToCholFactor(T, idx);
-                //
+
+				//
                 // Go ahead and add to the non-bound support vector list. This has to be done after adding 
                 // to the factorization, otherwise, the factorization will be incorrect.
                 //
@@ -741,20 +586,16 @@ void SVM::takeStep(Array<double, 1>& alpha,
         
             bAddedIndex = true;
         }
-        //
+
+		//
         // Now we need to drive the corresponding Lagrange to zero to force
         // the complementary conditions
         //
         if (abs(fcache(idx)) <= 1e-6) 
             break; 
         
-
-
-        //Array<double,1> e(T.size());
         Array<double, 1> e = m_eS;
 
-        //h.resize(m_idxnb.size());
-        //g.resize(m_idxb.size() + 1);
         h.reference(m_hS(Range(0, m_idxnb.size() - 1)));
         g.reference(m_gS(Range(0, m_idxb.size())));
 
@@ -776,13 +617,10 @@ void SVM::takeStep(Array<double, 1>& alpha,
             // Solve sub-problem
             double gt;
             
-            //Array<double, 1> et(h.size());
             Array<double, 1> et = m_etS(Range(0, h.size() - 1));
 
             for (int i = 0; i < m_idxnb.size(); i++)
                 et(i) = e(m_idxnb[i]);
-            //et(Range::all()) = 0;
-            //et(ht.size() - 1) = 1;
 
             m_os << infolevel(4) << "et = " << et << endl;
            
@@ -800,17 +638,6 @@ void SVM::takeStep(Array<double, 1>& alpha,
 
             m_os << infolevel(4) << "gt = " << gt << endl;
             
-            // Compute the remaining g-values
-            //for (size_t i = 0; i < m_idxb.size(); i++) 
-            //{             
-            //     g(i + 1) = e(m_idxb[i]) - T(m_idxb[i]) * g(0);
-            //     
-            //     for (size_t k = 0; k < m_idxnb.size(); k++)
-            //     { 
-            //          g(i + 1) += m_kernel[m_idxnb[k]][m_idxb[i]] * h(k);
- 
-            //     }
-            //}
             
             // Compute gamma
             gamma = -1;
@@ -821,21 +648,17 @@ void SVM::takeStep(Array<double, 1>& alpha,
         }
         else
         {   
-//             disp('bSlack');
 
             m_os << infolevel(2) << "bSlack" << endl;
 
             // Solve sub-problem
             double gt;
             
-            //Array<double, 1> et(h.size());
             Array<double, 1> et = m_etS(Range(0, h.size() - 1));
 
             for (int i = 0; i < m_idxnb.size(); i++)
                 et(i) = -e(m_idxnb[i]);
 
-            //et(Range::all()) = 0;
-            //et(ht.size() - 1) = -1;
 
             solveSubProblem(m_R, 
                             et,
@@ -849,20 +672,6 @@ void SVM::takeStep(Array<double, 1>& alpha,
             g(0) = gt;
             
             m_os << infolevel(4) << gt << endl;
-
-             //// Compute the remaining g-values
-             //for (size_t i = 0; i < m_idxb.size(); i++)
-             //{
-             //
-             //    g(i + 1) = -e(m_idxb[i]) - T(m_idxb[i]) * g(0);
-             //    
-             //    for (size_t k = 0; k < m_idxnb.size(); k++)
-             //    {
-             //        
-             //         g(i + 1) += m_kernel[m_idxnb[k]][m_idxb[i]] * h(k);
-             //        
-             //    }
-             //}
 
             gk = 1;
             
@@ -878,38 +687,6 @@ void SVM::takeStep(Array<double, 1>& alpha,
 
     //END_PROF();
 
-}
-
-Array<double, 1>& SVM::initializeNonSVCache(Array<double, 1>& fcache,
-                                            const Array<double, 1>& T,
-                                            const Array<double, 1>& alpha, 
-                                            const Array<double, 1>& Pr,
-                                            const int idx)
-{
-
-    ////BEGIN_PROF("SVM::initializeNonSVCache");
-
-    // Need to relook because I don't think Pr(idx+1) is needed.
-    fcache(idx) = -1 - Pr(0) * T(idx) - Pr(idx + 1);
-
-    //for (int k = 0; k < m_idxnb.size(); k++)
-    //    fcache(idx) += m_kernel[m_idxnb[k]][idx] * alpha(m_idxnb[k]);
-
-    //for (int k = 0; k < m_idxb.size(); k++)
-    //    fcache(idx) += m_kernel[m_idxb[k]][idx] * alpha(m_idxb[k]);
-
-    for (int j = 0; j < T.size(); j++)
-    {
-        if (alpha(j) > 0)
-        {
-            fcache(idx) += alpha(j) * m_kernel(idx,j);
-            //fcache(idx) += alpha(j) * m_kernel[idx][j];
-       }
-    }
-
-    return fcache;
-
-    ////END_PROF();
 }
 
 
@@ -1230,59 +1007,6 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
     
 }
 
-Array<double, 1>& SVM::updateCache(Array<double, 1>& fcache,
-                                   const Array<double, 1>& T,
-								   const Array<double, 1>& alpha,
-								   const Array<double, 1>& Pr,
-                                   const Array<double, 1>& alphaOld,
-                                   const Array<double, 1>& prOld,
-                                   const int pivotIdx)
-{
-    ////BEGIN_PROF("SVM::updateCache");
-
-    //int numChanged = m_changed.size();
-    //
-    //vector<double> alpha_diff(numChanged);
-    //double** caches = m_kernel.get_cache();
-
-    //// Precompute the alpha differences.
-    //for (int i = 0; i < numChanged; i++)
-    //{
-    //    alpha_diff[i] = alpha(m_changed[i]) - alphaOld(m_changed[i]);
-    //}
-
-    //for (int i = 0; i < T.size(); i++)
-    //{
-    //    int idx = i;
-
-    //    if ((m_status(idx) == 1))
-    //    {
-    //        fcache(idx) = 0.0;
-    //    }
-
-    //    else if (m_status(idx) == 2)
-    //    {
-    //        fcache(idx) = -Pr(idx + 1);
-
-    //    }
-    //    else if (m_status(idx) == 0)
-    //    {
-    //        fcache(idx) -= (Pr(0) - prOld(0)) * T(idx) + (Pr(idx + 1) - prOld(idx + 1));
-
-    //        for (int j = 0; j < numChanged; j++)
-    //        {                
-    //            int idxj = m_changed[j];
-    //            fcache(idx) += alpha_diff[j] * caches[idxj][idx];
-    //        }
-    //    }
-    //}
-
-
-
-    return fcache;
-
-    ////END_PROF();
-}
 
 
 void SVM::reinitializeCache(Array<double, 1>& fcache,
@@ -1291,16 +1015,12 @@ void SVM::reinitializeCache(Array<double, 1>& fcache,
 							const Array<double, 1>& alpha,
 							const Array<double, 1>& Pr)
 {
-    ////BEGIN_PROF("SVM::reinitializeCache");
-
 
 	vector<double*> vctr(m_idxnb.size());
 	for (int i = 0; i < m_idxnb.size(); i++)
 		vctr[i] = m_kernel[m_idxnb[i]];
 
-    // Note that there could be some issues here due to floating point precision where we 
-    // might misclassify a point and, therefore, incorrectly compute the cache value.
-    for (int i = 0; i < /*T.size()*/m_fcache_indices.size(); i++)
+    for (int i = 0; i < m_fcache_indices.size(); i++)
     {
         int idx = m_fcache_indices[i];
 
@@ -1312,36 +1032,27 @@ void SVM::reinitializeCache(Array<double, 1>& fcache,
         {
 
                 // See if we can calculate pi, on our own.
-                double cache =  -1 - T(idx) * Pr(0);
+                double cache =  1 + T(idx) * Pr(0);
                 for (int k = 0; k < m_idxnb.size(); k++)
-                    //cache += m_kernel(m_idxnb[k],idx) * alpha(m_idxnb[k]);
-				    cache += vctr[k][idx] * alpha(m_idxnb[k]);
+				    cache -= vctr[k][idx] * alpha(m_idxnb[k]);
 
-                cache += upperfcache(idx);
+                cache -= upperfcache(idx);
 
-                //for (int k = 0; k < m_idxb.size(); k++)
-                //    cache += m_kernel[m_idxb[k]][idx] * alpha(m_idxb[k]);
-
-                fcache(idx) = -cache;
+                fcache(idx) = cache;
             
         }
         else if (m_status(idx) == 0)
         {
             double cache = -1 - T(idx) * Pr(0);
             for (int k = 0; k < m_idxnb.size(); k++)
-                //cache += m_kernel(m_idxnb[k],idx) * alpha(m_idxnb[k]);
 				cache += vctr[k][idx] * alpha(m_idxnb[k]);
 
             cache += upperfcache(idx);
-
-            //for (int k = 0; k < m_idxb.size(); k++)
-            //    cache += m_kernel[m_idxb[k]][idx] * alpha(m_idxb[k]);
             
             fcache(idx) = cache;
         }
     }
 
-    ////END_PROF();
 }
 
 void SVM::solveSubProblem(const Array<double, 2>& R, 
@@ -1360,220 +1071,7 @@ void SVM::solveSubProblem(const Array<double, 2>& R,
 
     int N = qs.size();
 
-    if (abs(m_R(N - 1, N - 1)) > 1e-6)
-    {
 
-        // We are trying to solve the system
-        //          
-        // | Q  y |  | h |   =   | qs |   
-        // | y' 0 |  | g |       | ys |
-        // 
-        // where we have done a Cholesky factorization of Q
-        // 
-        // | R'*R  y |  | h |   =   | qs |   
-        // | y'    0 |  | g |       | ys |
-		//
-		// We solve the quations as follows
-		// 
-		// 1. Solve R^T * r1 = ys for r1
-		// 2. Solve R^T * r2 = qs for r2
-		// 3. g = (r1^T * r2 + ys) / (r1^T * r1)
-		// 4. Solve R * h = r1 * g - r2 for h
-		//
-        
-        // Backward substitution
-        Array<double, 1> r1 = m_t2(Range(0, N-1));
-        Array<double, 1> r2 = m_t3(Range(0, N-1));
-
-
-		// Replace the computation with a more efficient computation, here.
-		
-		BEGIN_PROF("Solve, r1, r2");
-		//
-		// Solve R^T * r1 = ys and R^T * r2 = qs for r1, r2 using
-		// a forward substitution. Since both systems involve a forward
-		// substitution, we can share the for loops to reduce loop
-		// overhead. 
-		//
-
-		double val = 0.0;
-
-		for (int i = 0; i < N; i++)
-		{
-			r1(i) = T(m_idxnb[i]);
-			r2(i) = qs(i);
-
-
-			//
-			// We will use a one-dimensional splice to 
-			// reduce the overhead.
-			//
-
-			for (int j = 0; j < i; j++)
-			{
-				val = R(j, i);
-				r1(i) -= r1(j) * val;
-				r2(i) -= r2(j) * val;
-			}
-
-			val = R(i,i);
-			r1(i) /= val;
-			r2(i) /= val;
-		}
-	
-
-
-		NEXT_PROF("Solve for g");
-
-		double s1 = 0.0; // || r1 ||^2
-		double s2 = 0.0; // r2^T * r1
-
-		for (int i = 0; i < N; i++)
-		{
-			s1 += r1(i) * r1(i);
-			s2 += r2(i) * r1(i);
-		}
-
-		g = (s2 + ys) / s1;
-
-		NEXT_PROF("Solve for h");
-
-		// Peform back solve to find hs solving equation
-
-		// R * hs1 = r1 * g - r2;
-        for (int i = N - 1; i >= 0; i--)
-        {
-            h(i) = r1(i) * g - r2(i);
-
-            for (int j = i + 1; j < N; j++)
-                h(i) -= h(j) * R(i, j);
-
-            h(i) = h(i) / R(i, i);
-        }
-
-		END_PROF();
-
-    }
-    else
-    {
-		//BEGIN_PROF("else ABS(m_R(N-1...");
-
-
-        // We are trying to solve the system
-        //          
-        // | Q  y |  | h |   =   | qs |   
-        // | y' 0 |  | g |       | ys |
-        // 
-        // where we have done a Cholesky factorization of Q
-        // 
-        // | R'*R  y |  | h |   =   | qs |   
-        // | y'    0 |  | g |       | ys |
-        // 
-        // In the case where Q is singular, one zero eigenvalue,
-        // we use the following system
-        //
-        // | -R'*R     -R'*r    y(1:N-1) | | h(1:N-1) | = |qs(1:N-1)|
-        // | -r'*R     -r'*r      y(N)   | |   h(N)   | = |  qs(N)  |
-        // | y(1:N-1)'  y(N)        0    | |    g     | = |   ys    |
-        //
-        // Of course, y, as seen in the lhs matrix, is passed in as a T.
-        // 
-        // The computation will occur in several steps.
-        //
-        // Set R = m_R(1:N-1, 1:N-1);
-        // Set r = m_R(1:N-1, N); 
-        //
-        // Step 1. Solve R' * r1 = q(1:N-1);
-        // Step 2. Solve R' * r2 = y(1:N-1);
-        // Step 3. g = (r' * r1 - q(N) ) / (r' * r2 - y(N));
-        // Step 4. h(N) = (- r2' * r1 - ys + r2' * r2 * g) / (r' * r2 - y(N)); 
-        // Step 5. Solve R * h(1:N-1) = -r1 + r2 * g - r * h(N);
-        // 
-
-        Array<double, 2> R = m_R(Range(0, N - 2), Range(0, N - 2));
-        Array<double, 1> r = m_R(Range(0, N - 2), N - 1);
-        //Array<double, 1> r1(N - 1);
-        //Array<double, 1> r2(N - 1);
-
-        Array<double, 1> r1 = m_t1(Range(0, N - 2));
-        Array<double, 1> r2 = m_t2(Range(0, N - 2));
-
-        //r1(Range::all()) = 0;
-        //r2(Range::all()) = 0;
-
-        for (int kidx = 0; kidx < r1.size(); kidx++)
-            r1(kidx) = 0.0;
-
-        for (int kidx = 0; kidx < r2.size(); kidx++)
-            r2(kidx) = 0.0;
-
-        m_os << infolevel(5) << "r = \n" << r << "\n\n";
-
-        // Step 1. Solve R' * r1 = q(1:N-1);
-        for (int i = 0; i < N - 1; i++)
-        {
-            r1(i) = qs(i);
-
-            for (int j = 0 ; j < i; j++)
-                r1(i) -= r1(j) * R(j, i);
-
-            r1(i) /= R(i, i);
-
-        }
-
-        m_os << infolevel(5) << "r1 = \n" << r1 << "\n\n";
-
-        // Step 2. Solve R' * r2 = T(1:N-1);
-        for (int i = 0; i < N - 1; i++)
-        {
-            //r2(i) = Y(i);
-            r2(i) = T(m_idxnb[i]);
-            for (int j = 0 ; j < i; j++)
-                r2(i) -= r2(j) * R(j, i);
-
-            r2(i) /= R(i, i);
-
-        }
-        
-        m_os << infolevel(5) << "r2 = \n" << r2 << "\n\n";
-
-        // Step 3. g = (r' * r1 - q(N) ) / (r' * r2 - T(N));
-        g = -qs(N - 1);
-        for (int i = 0; i < N - 1; i++)
-            g += r(i) * r1(i);
-
-        //double temp = -Y(N - 1);
-        double temp = -T(m_idxnb[N-1]);
-        for (int i = 0; i < N - 1; i++)
-            temp += r(i) * r2(i);
-
-        g /= temp;
-
-        m_os << infolevel(5) << "g = \n" << g << "\n\n";
-
-        // Step 4. h(N) = (- r2' * r1 - ys + r2' * r2 * g) / (r' * r2 - T(N)); 
-        h(N - 1) = -ys;
-        for (int i = 0; i < N - 1; i++)
-            h(N - 1) += - r2(i) * r1(i) + r2(i) * r2(i) * g;
-        
-        h(N - 1) /= temp;
-
-        // Step 5. Solve R * h(1:N-1) = -r1 + r2 * g - r * h(N);
-        // Backward substitution
-        for (int i = N - 2; i >= 0; i--)
-        {
-            h(i) = -r1(i) + r2(i) * g - r(i) * h(N - 1);
-
-            for (int j = i + 1; j < N - 1; j++)
-                h(i) -= h(j) * R(i, j);
-
-            h(i) /= R(i, i);
-        }
-
-        m_os << infolevel(5) << "h = \n" << h << "\n" << endl;
-		//END_PROF();
-    }
-    //END_PROF();
 }
 
 inline void computeGivens(const double a, 
@@ -1605,51 +1103,114 @@ inline void computeGivens(const double a,
     }
 }
 
-void SVM::reduceCholFactor(const int idx)
+void SVM::reduceCholFactor(const Array<double, 1>& T, const int idx)
 {
-   BEGIN_PROF("reduceCholFactor");
-   // The cholesky reduction works by deleting the appropriate
-   // column of R and, then, performing a series of Givens
-   // rotations to convert the Hessenberg matrix back to 
-   // a upper right triangular matrix. That is, deleting 
-   // a column will introduce non-zero entries below the
-   // diagonal and using a givens rotation to zero out these
-   // entries will correct factorization.
-   m_os << infolevel(2) << "Cholesky Reduction" << endl;
 
-   int N = m_R.extent(0);
+	//
+	//   Here, we downdate the Cholesky factorization by removing the 
+	//   row/column, indexed by idx. There are two cases to consider. 
+	//   (1) if 2 <= idx <= end, remove the row, perform Givens rotations, and 
+	//   convert back to upper triangular and return the reduced R
+	//   (2) if idx = 1, apply the transformation A to R, then convert to upper
+	//   triangular and reduced the R to the new size. In this case, the
+	//   transform A is defined as 
+	//       [-y2 * [y3, ..., yn] 1; 
+	//               I            0];
+	//   
 
-   // Shift the columns to the left, starting at idx, effectively
-   // deleting the column
-   for (int j = idx; j < N - 1; j++)
-   {
-       for (int i = 0; i <= j + 1; i++)
-       {
-           m_R(i, j) = m_R(i, j + 1);
-       }
-   }
+    int N = m_R.extent(0);
 
-   m_os << infolevel(6) << "R after deletion of column " << m_R << endl;
+    if (idx > 0)
+	{
+	   // The cholesky reduction works by deleting the appropriate
+	   // column of R and, then, performing a series of Givens
+	   // rotations to convert the Hessenberg matrix back to 
+	   // a upper right triangular matrix. That is, deleting 
+	   // a column will introduce non-zero entries below the
+	   // diagonal and using a givens rotation to zero out these
+	   // entries will correct factorization.
 
-   // Now we apply Givens rotations to zero out entries below the 
-   // diagonal.
-   for (int i = idx; i < N - 1; i++)
-   {
-       double c = 0.0;
-       double s = 0.0;
 
-       // Compute the Givens rotation
-       computeGivens(m_R(i, i), m_R(i + 1, i), c, s);
+	   // Shift the columns to the left, starting at idx, effectively
+	   // deleting the column
+	   for (int j = idx; j < N - 1; j++)
+	   {
+		   for (int i = 0; i <= j + 1; i++)
+		   {
+			   m_R(i, j) = m_R(i, j + 1);
+		   }
+	   }
+
+
+	   // Now we apply Givens rotations to zero out entries below the 
+	   // diagonal.
+	   for (int i = idx; i < N - 1; i++)
+	   {
+		   double c = 0.0;
+		   double s = 0.0;
+
+		   // Compute the Givens rotation
+		   computeGivens(m_R(i, i), m_R(i + 1, i), c, s);
+	        
+		   // Apply the Givens rotation
+		   for (int k = 0; k < N - 1; k++)
+		   {
+				double tau1 = m_R(i, k);
+				double tau2 = m_R(i + 1, k);
+				m_R(i, k) = c * tau1 - s * tau2;
+				m_R(i + 1, k) = s * tau1 + c * tau2;
+		   }
+	   }    
+	}
+    else
+	{
+
+		// This first part computes the product of R*A. The product can be 
+		// computed simply by noting that the first row is computed by adding
+		// two elements of each column of R and the remaining rows consist
+		// merely of a left shift of the original rows in R.
+	    //
+        // Compute first row of m_R, in place. R(1,1) is the only element
+        // that needs to be stored for future reference. As an alternative
+		// to storing, the computation can be performed in reverse.
+        //
+        R11 = m_R(0,0);
+		for (int j = 0; j < N - 2; j++)
+		{
+            m_R(0,j) = -T(m_idxnb[1])*T(m_idxnb[j+2]) * R11 + m_R(0,j+1);
+		}
+
         
-       // Apply the Givens rotation
-       for (int k = 0; k < N - 1; k++)
-       {
-            double tau1 = m_R(i, k);
-            double tau2 = m_R(i + 1, k);
-            m_R(i, k) = c * tau1 - s * tau2;
-            m_R(i + 1, k) = s * tau1 + c * tau2;
-       }
-   }    
+        // Now shift all of the entries to the left, below the first row.
+        for (int i = 1; i < N; i++)
+		{
+            for (int j = 0; j < N - 1; j++)
+			{
+                m_R(i,j) = m_R(i, j+1);
+			}
+		}
+        
+       // Perform a series of Givens rotations on the entire matrix
+       // to convert the upper Hessenberg back to right triangular.
+	   for (int i = 0; i < N - 1; i++)
+	   {
+		   double c = 0.0;
+		   double s = 0.0;
+
+		   // Compute the Givens rotation
+		   computeGivens(m_R(i, i), m_R(i + 1, i), c, s);
+	        
+		   // Apply the Givens rotation
+		   for (int k = 0; k < N - 1; k++)
+		   {
+				double tau1 = m_R(i, k);
+				double tau2 = m_R(i + 1, k);
+				m_R(i, k) = c * tau1 - s * tau2;
+				m_R(i + 1, k) = s * tau1 + c * tau2;
+		   }
+	   }    
+	}    
+
 
     // Resize the factorization
     m_R.reference(m_RStorage(Range(0, N-2), Range(0, N-2)));
@@ -1658,12 +1219,10 @@ void SVM::reduceCholFactor(const int idx)
     END_PROF();
 }
 
+
 void SVM::addToCholFactor(const Array<double, 1>& T, const int idx)
 {
-    BEGIN_PROF("addToCholFactor");
     int nNewSize = m_R.extent(0) + 1;
-    //Array<double, 2> W(nNewSize, nNewSize);
-
     
     if (m_RStorage.extent(0) < nNewSize )
     {
@@ -1673,48 +1232,74 @@ void SVM::addToCholFactor(const Array<double, 1>& T, const int idx)
 
     m_R.reference(m_RStorage(Range(0, nNewSize - 1), Range(0, nNewSize - 1)));
     
-    
-    m_os << infolevel(6) << "W orig = " << m_R << endl;
+	//  
+	//   Q, here, is the portion of the larger Q for the current non-bound support
+	//   vectors. The last row/column represents the row/column to be added. T
+	//   is the set of labels for the non-bound support vectors and the last
+	//   entry represents the entry to be added. 
+	// 
+	//  Update the Cholesky factorization by solving the following
+    //
+	//  R^T*r = -y_1 * y_n * Z^T * Q * e_1 + Z^T * q
+	//  r^T*r + rho^2 = e_1^T * Q * e_1 - 2 * y_1 * y_n * e_1^T * q + sigma
+    //
+	//  Note that Z is dealt with implicitly, i.e., no need to form due to sparse
+    //  nature of the matrix.
+	//
+ 
+       
+	if (T.size() == 1)
+	{
+		m_R(0,0) = sqrt(m_kernel.getQss(m_idxnb[0]));
+	}
+	else if (T.size() == 2)
+	{	
+		m_R(0, 0) = sqrt(m_kernel.getQss(m_idxnb[0]) + m_kernel.getQss(m_idxnb[1]) - 
+			2 * T(0) * T(1) * m_kernel(m_idxnb[0], m_idxnb[1]));
+	}
+	else
+	{
+                     
+		//
+		// Solve the following system
+		// Z = [-T(1) * T(2:end-1); eye(length(T) - 2) ] ;
+		// r = m_R' \(-T(1)*T(end) * Z' * Q(1:end-1,1) + Z' * q) ;
+		//
+		int N = m_idxnb.size();
+		Array<double, 1> q(N);
 
-    Array<double, 1> qa = m_qaS(Range(0, m_idxnb.size()));
+		// Form the RHS
+		for (int i = 0; i < N; i++)
+		{
+		   q(i) = -T(m_idxnb[0]) * T(m_idxnb[i+1]) * 
+					(m_kernel.getQss(m_idxnb[0]) * -T(m_idxnb[0]) * T(idx) + m_kernel[m_idxnb[0]][idx]) + 
+				   m_kernel[m_idxnb[i+1], m_idxnb[0]] * -T(m_idxnb[0]) * T(idx) + 
+				   m_kernel[i+1][idx];
+		}
+       
+		//
+		// Now solve the system through a forward substitution of 
+		// triangular system
+		// R' = x 0 0
+		//      x x 0
+		//      x x x
+		//
+		for (int i = 0; i < N; i++)
+		{
+			m_R(i,N) = q(i);
+			for (int j = 0; j < i - 1; j++)
+				m_R(i,N) -= m_R(j,i) * m_R(j, N);
+			m_R(i,N) /= m_R(i,i);
+		}
 
-    for (size_t i = 0; i < m_idxnb.size(); i++)
-    {
-        qa(i) = m_kernel(m_idxnb[i],idx);
-    }
+		// Solve for rho
+		double sigma = 0;
+		for (int i = 0; i < N; i++)
+			sigma += m_R(i,N) * m_R(i,N);
 
-    m_R(Range(0, nNewSize - 2), nNewSize - 1) = qa;
-    m_R(nNewSize - 1, nNewSize - 1) = m_kernel.getQss(idx); //m_kernel[idx][idx];
+		m_R(N,N) = sqrt(m_kernel.getQss(m_idxnb[0]) - 2 * T(m_idxnb[0]) * T(idx) * m_kernel[m_idxnb[0]][idx] + 
+			            m_kernel.getQss(idx) - sigma);
 
-    m_os << infolevel(6) << "R = " << m_R << endl;
-    //m_os << infolevel(3) << "W = " << W << endl;
-
-    for (int i = 0; i < nNewSize; i++)
-    {
-        if (i == nNewSize - 1)
-        {
-            for (int k = 0; k < i; k++)
-                m_R(i, i) -= m_R(k, i) * m_R(k, i);
-
-            if (m_R(i,i) > 1e-12)
-                m_R(i, i) = sqrt(m_R(i, i));
-            else
-                m_R(i, i) = 0.0;
-
-        }
-        else
-        {
-            int j = nNewSize - 1;
-            
-            for (int k = 0; k < i; k++)
-                m_R(i, j) -= m_R(k, i) * m_R(k, j);
-
-            m_R(i, j) /= m_R(i, i);
-        }
-    }
-
-    // Set the new factorization to R.
-    //m_R.reference(W);
-    END_PROF();
+	}
 }
 
