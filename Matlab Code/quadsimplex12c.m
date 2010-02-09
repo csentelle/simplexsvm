@@ -244,25 +244,56 @@ function m_R = UpdateCholesky(m_R, Q, T)
 %  R^T*r = -y_1 * y_n * Z^T * Q * e_1 + Z^T * q
 %  r^T*r + rho^2 = e_1^T * Q * e_1 - 2 * y_1 * y_n * e_1^T * q + sigma
 %
-
        
-   Z = [-T(1) * T(2:end-1); eye(length(T) - 2) ] ;
    if (length(T) == 1), 
-       m_R = sqrt(Q);
-   elseif (length(T) == 2),
-       m_R = sqrt([-T(1)*T(2) 1] * Q * [-T(1)*T(2); 1]);
+       m_R(1,1) = sqrt(Q(1,1));
+   elseif (length(T) == 2),       
+       m_R(1,1) = sqrt(Q(1,1) + Q(2,2) - 2 * T(1) * T(2) * Q(1,2));
    else
-           
-       q = Q(1:end-1,end);
-       sigma = Q(end,end);
 
-       r = m_R' \(-T(1)*T(end) * Z' * Q(1:end-1,1) + Z' * q) ;
-       rho = sqrt(Q(1,1) - 2 * T(1) * T(end) * q(1) + sigma - r'*r);
+        % Resize m_R
+        m_R = [m_R, zeros(size(m_R,1),1); 
+                   zeros(1,size(m_R,1)), 0];
+       
+       idx = length(T);
+       prevSize = length(T) - 1;
+              
+       %
+       % Solve the following system
+       % Z = [-T(1) * T(2:end-1); eye(length(T) - 2) ] ;
+       % r = m_R' \(-T(1)*T(end) * Z' * Q(1:end-1,1) + Z' * q) ;
+       %
+       
+       % Form the RHS
+       q = zeros(prevSize - 1, 1);
+       for i = 1:prevSize - 1,
+           q(i) = -T(1)*T(i+1)*(Q(1, 1) * -T(1)*T(idx) + Q(1,idx)) + ...
+                   Q(i+1,1)*-T(1)*T(idx) + Q(i+1,idx);
+       end
+       
+       %
+       % Now solve the system through a forward substitution of 
+       % triangular system
+       % R' = x 0 0
+       %      x x 0
+       %      x x x
+       %
+       for i = 1:prevSize - 1,
+           m_R(i,end) = q(i);
+           for j = 1:i - 1,
+               m_R(i,end) = m_R(i,end) - m_R(j,i) * m_R(j,end); 
+           end;
+           m_R(i,end) = m_R(i,end) / m_R(i,i);
+       end
 
-        m_R = [m_R, r; 
-               zeros(1,size(m_R,1)), rho];
+       for i = 1:prevSize-1,
+           m_R(end,end)  = m_R(end,end) + m_R(i,end) * m_R(i,end);
+       end
+
+       m_R(end,end) = sqrt(Q(1,1) - 2 * T(1) * T(idx) * Q(1,idx) + Q(idx,idx) - m_R(end,end));
 
    end
+      
    
 function m_R = DownDateCholesky(m_R, T, idx)
 
@@ -290,11 +321,23 @@ function m_R = DownDateCholesky(m_R, T, idx)
 
     else
 
-        A = [-T(2) * T(3:end), 1; 
-             eye(length(T(3:end))), zeros(length(T(3:end)),1)];
-
-        m_R = m_R * A;
-
+        %
+        % Compute first row of m_R, in place. R(1,1) is the only element
+        % that needs to be stored in a separate location.
+        %
+        R11 = m_R(1,1);
+        for j = 1:length(T)-2, 
+            m_R(1,j) = -T(2)*T(j+2) * R11 + m_R(1,j+1);
+        end
+        
+        % Now shift all of the entries to the left.
+        for i = 2:size(m_R,1),
+            for j = 1:size(m_R,2) - 1,
+                m_R(i,j) = m_R(i, j+1);
+            end
+        end
+        
+                        
         for i = 1:size(m_R,1) - 1,
             m_R(i:i+1,:) = givens(m_R(i, i), m_R(i+1, i)) * m_R(i:i+1,:);
         end
@@ -327,11 +370,25 @@ function [h, g] = solveSub(Q, y, q, r)
     if (length(y) > 1)
         Z = [-y(1)*y(2:end); eye(length(y)-1)];
         hy = r*y(1);
-        rhs = Z'*(q-Q(:,1)*hy);
-        hz = -m_R'\rhs;
-        hz = m_R\hz;      
-        h = Z*hz;
-        h(1) = h(1) + hy;
+        
+        % rhs = Z'*(q-Q(:,1)*hy);
+        % Use implicit function to solve
+        
+        rhs = zeros(length(y)-1, 1);
+        for i = 1:length(y) - 1,
+            rhs(i) = -y(1)*y(i+1)*(q(1)-Q(1,1)*hy) + q(i+1)-Q(i+1,1)*hy;
+        end;
+         
+        % Perform backward, forward solve to obtain hz.
+        %hz = -m_R'\rhs;
+        %hz = m_R\hz;      
+        hz = fwrdSolve(-m_R, rhs);
+        hz = bkwrdSolve(m_R, hz);
+        
+        % Form the actual solution
+        h = zeros(size(hz,1)+1,1);
+        h(1) = -y(1)*y(2:end) * hz + hy;
+        h(2:end) = hz;
         g = y(1)*(q(1) - Q(1,:)*h);
     else
         % Just solve the following
@@ -342,7 +399,42 @@ function [h, g] = solveSub(Q, y, q, r)
         g = y(1)*(q - Q*h);
     end
     
-    
+function x = fwrdSolve(R, b)
+
+   %
+   % Now solve the system through a forward substitution of 
+   % triangular system
+   % R' = x 0 0
+   %      x x 0
+   %      x x x
+   %
+   x = zeros(size(R,1),1);
+   for i = 1:size(R,1),
+       x(i) = b(i);
+       for j = 1:i - 1,
+           x(i) = x(i) - R(j,i) * x(j); 
+       end;
+       x(i) = x(i) / R(i,i);
+   end
+
+function y = bkwrdSolve(R, b)
+
+   %
+   % Now solve the system through a forward substitution of 
+   % triangular system
+   % R = x x x
+   %     0 x x
+   %     0 0 x
+   %
+   y = zeros(size(R,1),1);
+   for i = size(R,1):-1:1,
+       y(i) = b(i);
+       for j = size(R,1):-1:i+1,
+           y(i) = y(i) - R(i,j) * y(j); 
+       end;
+       y(i) = y(i) / R(i,i);
+   end
+            
 function updateCache()
 
 global m_alpha;
