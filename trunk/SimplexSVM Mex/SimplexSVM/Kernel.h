@@ -26,16 +26,13 @@ public:
     , m_T(T)
     {
 
-
-        //m_cache.resize(T.size());
-        //m_cachess.resize(T.size());
         m_cachess = new double[T.size()];
         m_cache = new double*[T.size()];
 
         for (int i = 0; i < T.size(); i++)
             m_cache[i] = NULL;
             
-        m_cacheLineSize = cacheSize; //100e6 / (T.size() * 8);
+        m_cacheLineSize = cacheSize; 
 
         m_cacheLines = new double[m_T.size() * m_cacheLineSize];
         m_cacheLineIdx = 0;
@@ -300,13 +297,9 @@ public:
                 sum = 0.0;
 				double diff = 0.0;
 				const double* points2 = &points2buf[j * N];
-				//Array<double, 1>& points1 = m_P(Range::all(), i);
-				//Array<double, 1>& points2 = m_P(Range::all(), j);
 
                 for (int k = 0; k < N; k++)
                 {
-                    //diff = m_P(k, i) - m_P(k, j);
-					//diff = points1(k) - points2(k);
                     diff = points1[k] - points2[k];
 					sum += diff * diff;
                 }
@@ -480,7 +473,6 @@ public:
 
 				for (int k = 0; k < N; k++)
 					sum += points1[k] * points2[k];
-                    //sum += m_P(k, i) * m_P(k, j);
                 
                 m_cache[i][j] = sum * m_T(i) * m_T(j);
 

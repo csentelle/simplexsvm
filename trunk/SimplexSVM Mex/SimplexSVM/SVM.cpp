@@ -242,8 +242,8 @@ void SVM::takeStep(Array<double, 1>& alpha,
     double gamma = 0.0;
     int N = T.size();
 
-    Array<double, 1> h = m_hS(Range(0, m_idxnb.size())); 
-    Array<double, 1> g = m_gS(Range(0, m_idxb.size()));
+    Array<double, 1> h = m_hS(Range(0, (int)m_idxnb.size())); 
+    Array<double, 1> g = m_gS(Range(0, (int)m_idxb.size()));
 
     for (int kidx = 0; kidx < h.size(); kidx++)
         h(kidx) = 0.0;
@@ -254,7 +254,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
     // Find the indices for bound, non-bound support vectors. Note that 
     // this, in reality, needs to be moved to another section.
         
-    Array<double, 1> q = m_qS(Range(0, m_idxnb.size() - 1));
+    Array<double, 1> q = m_qS(Range(0, (int)m_idxnb.size() - 1));
 
     m_os << infolevel(2) << "Pivoting on index: " << idx << endl;
 
@@ -278,7 +278,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
         //
         // Solve sub-problem
         //
-        Array<double, 1> ht = m_htS(Range(0, m_idxnb.size() - 1));
+        Array<double, 1> ht = m_htS(Range(0, (int)m_idxnb.size() - 1));
         
         double gt;
 
@@ -316,7 +316,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
 
         for (size_t k = 0; k < m_idxnb.size(); k++)
         {
-			gamma += m_kernel(m_idxnb[k],idx) * h(k);
+			gamma += m_kernel((int)m_idxnb[k],idx) * h(k);
         }
         
         m_os << infolevel(4) << "gamma = " << gamma << endl;
@@ -332,7 +332,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
                 
                 
         // Solve sub-problem
-        Array<double, 1> ht = m_htS(Range(0, m_idxnb.size() - 1));
+        Array<double, 1> ht = m_htS(Range(0, (int)m_idxnb.size() - 1));
         double gt;
 
 		q = -q;
@@ -358,7 +358,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
    
         gamma = -m_kernel.getQss(idx) + T(idx) * g(0); 
                
-        for (size_t k = 0; k < m_idxnb.size(); k++)
+        for (size_t k = 0; k < (int)m_idxnb.size(); k++)
         {
             gamma -= m_kernel(m_idxnb[k],idx) * h(k);
         }
@@ -486,7 +486,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
                 vector<int>::iterator vIter = 
                     find(m_idxnb.begin(), m_idxnb.end(), idxr);
                 
-                int idx_pos = vIter - m_idxnb.begin();
+                int idx_pos = (int)(vIter - m_idxnb.begin());
 
                 m_os << "idx_pos = " << idx_pos << endl;
 
@@ -494,7 +494,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
                 // Update the factorization by removing the corresponding, row/column, from 
                 // the factorization. 
                 //
-                reduceCholFactor(idx_pos);
+                reduceCholFactor(T, idx_pos);
 
                 m_os << infolevel(6) << "Reduced Cholesky = " << endl;
                 m_os << infolevel(6) << m_R << endl;            
@@ -596,8 +596,8 @@ void SVM::takeStep(Array<double, 1>& alpha,
         
         Array<double, 1> e = m_eS;
 
-        h.reference(m_hS(Range(0, m_idxnb.size() - 1)));
-        g.reference(m_gS(Range(0, m_idxb.size())));
+        h.reference(m_hS(Range(0, (int)m_idxnb.size() - 1)));
+        g.reference(m_gS(Range(0, (int)m_idxb.size())));
 
         for (int kidx = 0; kidx < h.size(); kidx++)
             h(kidx) = 0.0;
@@ -905,13 +905,13 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
 
             //BEGIN_PROF("randStart");
             // Create a random starting position
-            int randStart = rand() % m_idxpossible.size();
+            int randStart = rand() % (int)m_idxpossible.size();
             //int randStart = clock() % idxpossible.size();
             //END_PROF();
 
             //BEGIN_PROF("Fill In");
-            int numReplaceSearch = (m_idxpossible.size() < 100 ? 
-                                    m_idxpossible.size() : 100);
+            int numReplaceSearch = ((int)m_idxpossible.size() < 100 ? 
+                                    (int)m_idxpossible.size() : 100);
 
             for (int i = 0; i < numReplaceSearch; i++)
             {
@@ -1069,9 +1069,114 @@ void SVM::solveSubProblem(const Array<double, 2>& R,
     // solve the system of equations associated with the sub-problem
     //
 
-    int N = qs.size();
+    // Solve using the NULL space method.
+    // Solve the following in sequence:
+    //  1. y'Yhy = r for hy
+    //      hy = y(1)r
+    //      Y = [1; 0; 0; ...]
+    //  2. Z'QZhz = Z'(q - QYhy) for hz
+    //      R'R = -Z'QZ
+    //      -R'Rhz = Z'(q - QYhy)
+    //      rhs = Z'(q - QYhy)
+    //      -R'Rhz = rhs
+    //      -R'x = rhs
+    //      Rhz = x
+    //  3. h = Zhz + Yhy
+    //  4. Y'Qh + Y'yg = Y'q for g
+    //     Q(1,:)h + y(1)g = q(1)     
+    //     
 
+	int N = qs.size();
 
+	if (N > 1)
+	{
+		// Solve for hy = ys * y(1) 
+		double hy = ys * T(m_idxnb[0]);
+        
+        // rhs = Z'*(q - Q(:,1)*hy);
+        // Use implicit function to solve
+		Array<double,1> hz(N - 1);
+
+		// Compute the rhs for solving R'Rhz = rhs. Note that we compute the negative of the rhs at this point 
+		// in anticipation of computing -R'hz = rhs
+		for (int i = 0; i < N - 1; i++)
+		{
+            hz(i) = T(m_idxnb[0]) * T(m_idxnb[i + 1]) * (qs(0) - m_kernel.getQss(m_idxnb[0]) * hy) - 
+				     qs(i + 1) + m_kernel[m_idxnb[i + 1]][0] * hy;
+		}
+
+        // Perform backward, forward solve to obtain hz.
+        // hz = -m_R'\rhs;
+        // hz = m_R\hz;      
+        hz = fwrdSolve(m_R, hz);
+        hz = bkwrdSolve(m_R, hz);
+        
+        // Form the actual solution
+		h(0) = hy;
+		for (int i = 1; i < N; i++)
+		{
+			h(0) -= T(m_idxnb[0]) * T(m_idxnb[i]) * hz(i - 1);
+			h(i) = hz(i);
+		}
+
+		g = T(m_idxnb[0]) * qs(0);
+		for (int i = 0; i < N; i++)
+		{
+			g -= T(m_idxnb[0]) * m_kernel[m_idxnb[0]][i] * h(i);
+		}
+	}
+    else
+	{
+        // Just solve the following
+        // 1. h = y(1)*r
+        // 2. g = y(1)*(q - Q*h)
+        //         
+        h(0) = T(m_idxnb[0]) * ys;
+        g = T(m_idxnb[0]) * (qs(0) - m_kernel.getQss(m_idxnb[0]) * h(0));
+	}
+
+}
+
+inline Array<double, 1>& SVM::fwrdSolve(const Array<double, 2>& R, Array<double, 1>& x)
+{
+   //
+   // Now solve the system through a forward substitution of 
+   // triangular system
+   // R' = x 0 0
+   //      x x 0
+   //      x x x
+   //
+   for (int i = 0; i < R.extent(0); i++)
+   {
+	   for (int j = 0; j < i - 1; j++)
+	   {
+           x(i) = x(i) - R(j, i) * x(j); 
+	   }
+       x(i) = x(i) / R(i,i);
+   }
+
+   return x;
+}
+
+inline Array<double, 1>& SVM::bkwrdSolve(const Array<double, 2>& R, Array<double, 1>& x)
+{
+   //
+   // Now solve the system through a forward substitution of 
+   // triangular system
+   // R = x x x
+   //     0 x x
+   //     0 0 x
+   //
+   for (int i = R.extent(0) - 1; i >= 0; --i)
+   {
+	   for (int j = R.extent(0) - 1; j > i + 1; --j)
+	   {
+           x(i) = x(i) - R(i,j) * x(j); 
+	   }
+	   x(i) = x(i) / R(i,i);
+   }
+   
+   return x;
 }
 
 inline void computeGivens(const double a, 
@@ -1174,7 +1279,7 @@ void SVM::reduceCholFactor(const Array<double, 1>& T, const int idx)
         // that needs to be stored for future reference. As an alternative
 		// to storing, the computation can be performed in reverse.
         //
-        R11 = m_R(0,0);
+        double R11 = m_R(0,0);
 		for (int j = 0; j < N - 2; j++)
 		{
             m_R(0,j) = -T(m_idxnb[1])*T(m_idxnb[j+2]) * R11 + m_R(0,j+1);
@@ -1265,7 +1370,7 @@ void SVM::addToCholFactor(const Array<double, 1>& T, const int idx)
 		// Z = [-T(1) * T(2:end-1); eye(length(T) - 2) ] ;
 		// r = m_R' \(-T(1)*T(end) * Z' * Q(1:end-1,1) + Z' * q) ;
 		//
-		int N = m_idxnb.size();
+		int N = (int)m_idxnb.size();
 		Array<double, 1> q(N);
 
 		// Form the RHS
@@ -1273,7 +1378,7 @@ void SVM::addToCholFactor(const Array<double, 1>& T, const int idx)
 		{
 		   q(i) = -T(m_idxnb[0]) * T(m_idxnb[i+1]) * 
 					(m_kernel.getQss(m_idxnb[0]) * -T(m_idxnb[0]) * T(idx) + m_kernel[m_idxnb[0]][idx]) + 
-				   m_kernel[m_idxnb[i+1], m_idxnb[0]] * -T(m_idxnb[0]) * T(idx) + 
+				   m_kernel[m_idxnb[i+1]][m_idxnb[0]] * -T(m_idxnb[0]) * T(idx) + 
 				   m_kernel[i+1][idx];
 		}
        
