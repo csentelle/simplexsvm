@@ -40,15 +40,10 @@ private:
 						    const Array<double, 1>& alpha,
 						    const Array<double, 1>& Pr);
 
-    Array<double, 1>& initializeNonSVCache(Array<double, 1>& fcache,
-                                            const Array<double, 1>& T,
-                                            const Array<double, 1>& alpha, 
-                                            const Array<double, 1>& Pr,
-                                            const int idx);
 
     // Add a row/column to the factorization (L)
     void addToCholFactor(const Array<double, 1>& T, const int idx);
-    void reduceCholFactor(const int idx);
+    void reduceCholFactor(const Array<double, 1>& T, const int idx);
 
     void solveSubProblem(const Array<double, 2>& R, 
                          const Array<double, 1>& qs,
@@ -73,6 +68,9 @@ private:
                              Array<double, 1>& fcache,
                              Array<double, 1>& upperfcache,
                              double& ming);
+
+	inline Array<double, 1>& fwrdSolve(const Array<double, 2>& R, Array<double, 1>& x);
+	inline Array<double, 1>& bkwrdSolve(const Array<double, 2>& R, Array<double, 1>& x);
 
     Kernel& m_kernel;
     ProxyStream& m_os;
