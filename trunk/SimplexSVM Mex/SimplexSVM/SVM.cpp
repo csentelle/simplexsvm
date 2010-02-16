@@ -260,7 +260,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
 
     for (int i = 0; i < q.size(); i++)
     {
-        q(i) = -m_kernel(idx, m_idxnb[i]);
+        q(i) = m_kernel(idx, m_idxnb[i]);
     }
 
     m_os << infolevel(4) << "q = " << q << endl;
@@ -314,9 +314,9 @@ void SVM::takeStep(Array<double, 1>& alpha,
         //
         gamma = -m_kernel.getQss(idx) - T(idx) * g(0); 
 
-        for (size_t k = 0; k < m_idxnb.size(); k++)
+        for (int k = 0; k < m_idxnb.size(); k++)
         {
-			gamma += m_kernel((int)m_idxnb[k],idx) * h(k);
+			gamma += m_kernel(m_idxnb[k], idx) * h(k);
         }
         
         m_os << infolevel(4) << "gamma = " << gamma << endl;
@@ -358,7 +358,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
    
         gamma = -m_kernel.getQss(idx) + T(idx) * g(0); 
                
-        for (size_t k = 0; k < (int)m_idxnb.size(); k++)
+        for (int k = 0; k < (int)m_idxnb.size(); k++)
         {
             gamma -= m_kernel(m_idxnb[k],idx) * h(k);
         }
@@ -496,8 +496,8 @@ void SVM::takeStep(Array<double, 1>& alpha,
                 //
                 reduceCholFactor(T, idx_pos);
 
-                m_os << infolevel(6) << "Reduced Cholesky = " << endl;
-                m_os << infolevel(6) << m_R << endl;            
+                m_os << infolevel(5) << "Reduced Cholesky = " << endl;
+                m_os << infolevel(5) << m_R << endl;            
 
                 // Erase the value from the non-bound values
                 if (vIter != m_idxnb.end())
@@ -581,7 +581,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
                 m_idxnb.push_back(idx);
                 m_status(idx) = 1;
                     
-                m_os << infolevel(6) << "New Chol Factorization = " << endl << m_R << endl;
+                m_os << infolevel(5) << "New Chol Factorization = " << endl << m_R << endl;
             }
         
             bAddedIndex = true;
@@ -620,7 +620,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
             Array<double, 1> et = m_etS(Range(0, h.size() - 1));
 
             for (int i = 0; i < m_idxnb.size(); i++)
-                et(i) = e(m_idxnb[i]);
+                et(i) = -e(m_idxnb[i]);
 
             m_os << infolevel(4) << "et = " << et << endl;
            
@@ -657,7 +657,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
             Array<double, 1> et = m_etS(Range(0, h.size() - 1));
 
             for (int i = 0; i < m_idxnb.size(); i++)
-                et(i) = -e(m_idxnb[i]);
+                et(i) = e(m_idxnb[i]);
 
 
             solveSubProblem(m_R, 
@@ -1074,16 +1074,16 @@ void SVM::solveSubProblem(const Array<double, 2>& R,
     //  1. y'Yhy = r for hy
     //      hy = y(1)r
     //      Y = [1; 0; 0; ...]
-    //  2. Z'QZhz = Z'(q - QYhy) for hz
+    //  2. -Z'QZhz = Z'(QYhy+q) for hz
     //      R'R = -Z'QZ
-    //      -R'Rhz = Z'(q - QYhy)
-    //      rhs = Z'(q - QYhy)
+    //      -R'Rhz = Z'(QYhy-q)
+    //      rhs = Z'(QYhy-q)
     //      -R'Rhz = rhs
     //      -R'x = rhs
     //      Rhz = x
     //  3. h = Zhz + Yhy
-    //  4. Y'Qh + Y'yg = Y'q for g
-    //     Q(1,:)h + y(1)g = q(1)     
+    //  4. -Y'Qh + Y'yg = -Y'q for g
+    //     -Q(1,:)h + y(1)g = -q(1)     
     //     
 
 	int N = qs.size();
@@ -1101,8 +1101,9 @@ void SVM::solveSubProblem(const Array<double, 2>& R,
 		// in anticipation of computing -R'hz = rhs
 		for (int i = 0; i < N - 1; i++)
 		{
-            hz(i) = T(m_idxnb[0]) * T(m_idxnb[i + 1]) * (qs(0) - m_kernel.getQss(m_idxnb[0]) * hy) - 
-				     qs(i + 1) + m_kernel[m_idxnb[i + 1]][0] * hy;
+			assert(i >= 0 && i < N - 1);
+            hz(i) = T(m_idxnb[0]) * T(m_idxnb[i + 1]) * (m_kernel.getQss(m_idxnb[0]) * hy - qs(0)) +
+				     qs(i + 1) - m_kernel[m_idxnb[i + 1]][m_idxnb[0]] * hy;
 		}
 
         // Perform backward, forward solve to obtain hz.
@@ -1115,14 +1116,15 @@ void SVM::solveSubProblem(const Array<double, 2>& R,
 		h(0) = hy;
 		for (int i = 1; i < N; i++)
 		{
+		    assert(i - 1 >= 0 && i - 1 < N - 1);
 			h(0) -= T(m_idxnb[0]) * T(m_idxnb[i]) * hz(i - 1);
-			h(i) = hz(i);
+			h(i) = hz(i - 1);
 		}
 
-		g = T(m_idxnb[0]) * qs(0);
+		g = -T(m_idxnb[0]) * qs(0);
 		for (int i = 0; i < N; i++)
 		{
-			g -= T(m_idxnb[0]) * m_kernel[m_idxnb[0]][i] * h(i);
+			g += T(m_idxnb[0]) * m_kernel[m_idxnb[0]][m_idxnb[i]] * h(i);
 		}
 	}
     else
@@ -1132,9 +1134,8 @@ void SVM::solveSubProblem(const Array<double, 2>& R,
         // 2. g = y(1)*(q - Q*h)
         //         
         h(0) = T(m_idxnb[0]) * ys;
-        g = T(m_idxnb[0]) * (qs(0) - m_kernel.getQss(m_idxnb[0]) * h(0));
+        g = T(m_idxnb[0]) * (m_kernel.getQss(m_idxnb[0]) * h(0) - qs(0));
 	}
-
 }
 
 inline Array<double, 1>& SVM::fwrdSolve(const Array<double, 2>& R, Array<double, 1>& x)
@@ -1146,11 +1147,13 @@ inline Array<double, 1>& SVM::fwrdSolve(const Array<double, 2>& R, Array<double,
    //      x x 0
    //      x x x
    //
+  
    for (int i = 0; i < R.extent(0); i++)
    {
-	   for (int j = 0; j < i - 1; j++)
+	   for (int j = 0; j <= i - 1; j++)
 	   {
-           x(i) = x(i) - R(j, i) * x(j); 
+           assert(i >= 0 && j >= 0 && i < x.extent(0) && j < x.extent(0));
+		   x(i) = x(i) - R(j, i) * x(j); 
 	   }
        x(i) = x(i) / R(i,i);
    }
@@ -1169,8 +1172,9 @@ inline Array<double, 1>& SVM::bkwrdSolve(const Array<double, 2>& R, Array<double
    //
    for (int i = R.extent(0) - 1; i >= 0; --i)
    {
-	   for (int j = R.extent(0) - 1; j > i + 1; --j)
+	   for (int j = R.extent(0) - 1; j >= i + 1; --j)
 	   {
+           assert(i >= 0 && j >= 0 && i < x.extent(0) && j < x.extent(0));
            x(i) = x(i) - R(i,j) * x(j); 
 	   }
 	   x(i) = x(i) / R(i,i);
@@ -1238,7 +1242,7 @@ void SVM::reduceCholFactor(const Array<double, 1>& T, const int idx)
 
 	   // Shift the columns to the left, starting at idx, effectively
 	   // deleting the column
-	   for (int j = idx; j < N - 1; j++)
+	   for (int j = idx - 1; j < N - 1; j++)
 	   {
 		   for (int i = 0; i <= j + 1; i++)
 		   {
@@ -1249,7 +1253,7 @@ void SVM::reduceCholFactor(const Array<double, 1>& T, const int idx)
 
 	   // Now we apply Givens rotations to zero out entries below the 
 	   // diagonal.
-	   for (int i = idx; i < N - 1; i++)
+	   for (int i = idx - 1; i < N - 1; i++)
 	   {
 		   double c = 0.0;
 		   double s = 0.0;
@@ -1258,7 +1262,7 @@ void SVM::reduceCholFactor(const Array<double, 1>& T, const int idx)
 		   computeGivens(m_R(i, i), m_R(i + 1, i), c, s);
 	        
 		   // Apply the Givens rotation
-		   for (int k = 0; k < N - 1; k++)
+		   for (int k = i; k < N - 1; k++)
 		   {
 				double tau1 = m_R(i, k);
 				double tau2 = m_R(i + 1, k);
@@ -1280,11 +1284,10 @@ void SVM::reduceCholFactor(const Array<double, 1>& T, const int idx)
 		// to storing, the computation can be performed in reverse.
         //
         double R11 = m_R(0,0);
-		for (int j = 0; j < N - 2; j++)
+		for (int j = 0; j < N - 1; j++)
 		{
             m_R(0,j) = -T(m_idxnb[1])*T(m_idxnb[j+2]) * R11 + m_R(0,j+1);
 		}
-
         
         // Now shift all of the entries to the left, below the first row.
         for (int i = 1; i < N; i++)
@@ -1297,6 +1300,7 @@ void SVM::reduceCholFactor(const Array<double, 1>& T, const int idx)
         
        // Perform a series of Givens rotations on the entire matrix
        // to convert the upper Hessenberg back to right triangular.
+
 	   for (int i = 0; i < N - 1; i++)
 	   {
 		   double c = 0.0;
@@ -1306,7 +1310,7 @@ void SVM::reduceCholFactor(const Array<double, 1>& T, const int idx)
 		   computeGivens(m_R(i, i), m_R(i + 1, i), c, s);
 	        
 		   // Apply the Givens rotation
-		   for (int k = 0; k < N - 1; k++)
+		   for (int k = i; k < N - 1; k++)
 		   {
 				double tau1 = m_R(i, k);
 				double tau2 = m_R(i + 1, k);
@@ -1320,22 +1324,12 @@ void SVM::reduceCholFactor(const Array<double, 1>& T, const int idx)
     // Resize the factorization
     m_R.reference(m_RStorage(Range(0, N-2), Range(0, N-2)));
 
-    //m_R.resizeAndPreserve(N - 1, N - 1);
     END_PROF();
 }
 
 
 void SVM::addToCholFactor(const Array<double, 1>& T, const int idx)
 {
-    int nNewSize = m_R.extent(0) + 1;
-    
-    if (m_RStorage.extent(0) < nNewSize )
-    {
-        m_RStorage.resizeAndPreserve(nNewSize  + STORAGE_NEW_INCREMENT, 
-                                     nNewSize  + STORAGE_NEW_INCREMENT);
-    }
-
-    m_R.reference(m_RStorage(Range(0, nNewSize - 1), Range(0, nNewSize - 1)));
     
 	//  
 	//   Q, here, is the portion of the larger Q for the current non-bound support
@@ -1352,15 +1346,27 @@ void SVM::addToCholFactor(const Array<double, 1>& T, const int idx)
     //  nature of the matrix.
 	//
  
-       
-	if (T.size() == 1)
-	{
-		m_R(0,0) = sqrt(m_kernel.getQss(m_idxnb[0]));
-	}
-	else if (T.size() == 2)
+	int N = (int)m_idxnb.size();
+    
+    if (m_RStorage.extent(0) < N + 1 )
+    {
+        m_RStorage.resizeAndPreserve(N + 1 + STORAGE_NEW_INCREMENT, 
+                                     N + 1 + STORAGE_NEW_INCREMENT);
+    }
+
+	// Reference a matrix which will be size N - 1 after adding 
+	// the new entry
+	m_R.reference(m_RStorage(Range(0, N - 1), Range(0, N - 1)));
+
+	// Zero out new row/column
+	for (int i = 0; i < N - 1; i++)
+		m_R(i,N-1) = m_R(N-1,i) = 0;
+	m_R(N-1,N-1) = 0;
+
+	if (N == 1)
 	{	
-		m_R(0, 0) = sqrt(m_kernel.getQss(m_idxnb[0]) + m_kernel.getQss(m_idxnb[1]) - 
-			2 * T(0) * T(1) * m_kernel(m_idxnb[0], m_idxnb[1]));
+		m_R(0, 0) = sqrt(m_kernel.getQss(m_idxnb[0]) + m_kernel.getQss(idx) - 
+			2 * T(m_idxnb[0]) * T(idx) * m_kernel(m_idxnb[0], idx));
 	}
 	else
 	{
@@ -1370,17 +1376,17 @@ void SVM::addToCholFactor(const Array<double, 1>& T, const int idx)
 		// Z = [-T(1) * T(2:end-1); eye(length(T) - 2) ] ;
 		// r = m_R' \(-T(1)*T(end) * Z' * Q(1:end-1,1) + Z' * q) ;
 		//
-		int N = (int)m_idxnb.size();
-		Array<double, 1> q(N);
+		Array<double, 1> q(N - 1);
 
-		// Form the RHS
-		for (int i = 0; i < N; i++)
+		// Form the RHS. Note that we are explicitly forming -rhs.
+		for (int i = 0; i < N - 1; i++)
 		{
 		   q(i) = -T(m_idxnb[0]) * T(m_idxnb[i+1]) * 
 					(m_kernel.getQss(m_idxnb[0]) * -T(m_idxnb[0]) * T(idx) + m_kernel[m_idxnb[0]][idx]) + 
-				   m_kernel[m_idxnb[i+1]][m_idxnb[0]] * -T(m_idxnb[0]) * T(idx) + 
-				   m_kernel[i+1][idx];
+				    m_kernel[m_idxnb[i+1]][m_idxnb[0]] * -T(m_idxnb[0]) * T(idx) + 
+				    m_kernel[m_idxnb[i+1]][idx];
 		}
+
        
 		//
 		// Now solve the system through a forward substitution of 
@@ -1389,21 +1395,21 @@ void SVM::addToCholFactor(const Array<double, 1>& T, const int idx)
 		//      x x 0
 		//      x x x
 		//
-		for (int i = 0; i < N; i++)
+		for (int i = 0; i < N - 1; i++)
 		{
-			m_R(i,N) = q(i);
-			for (int j = 0; j < i - 1; j++)
-				m_R(i,N) -= m_R(j,i) * m_R(j, N);
-			m_R(i,N) /= m_R(i,i);
+			m_R(i, N - 1) = q(i);
+			for (int j = 0; j <= i - 1; j++)
+				m_R(i, N - 1) -= m_R(j,i) * m_R(j, N - 1);
+			m_R(i, N - 1) /= m_R(i, i);
 		}
 
 		// Solve for rho
 		double sigma = 0;
-		for (int i = 0; i < N; i++)
-			sigma += m_R(i,N) * m_R(i,N);
+		for (int i = 0; i < N - 1; i++)
+			sigma += m_R(i, N - 1) * m_R(i, N - 1);
 
-		m_R(N,N) = sqrt(m_kernel.getQss(m_idxnb[0]) - 2 * T(m_idxnb[0]) * T(idx) * m_kernel[m_idxnb[0]][idx] + 
-			            m_kernel.getQss(idx) - sigma);
+		m_R(N - 1,N - 1) = sqrt(m_kernel.getQss(m_idxnb[0]) - 2 * T(m_idxnb[0]) * T(idx) * 
+			                    m_kernel[m_idxnb[0]][idx] + m_kernel.getQss(idx) - sigma);
 
 	}
 }

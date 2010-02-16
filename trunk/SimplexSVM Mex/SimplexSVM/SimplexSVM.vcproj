@@ -4,6 +4,7 @@
 	Version="8.00"
 	Name="SimplexSVM"
 	ProjectGUID="{1746CC6C-4039-440F-B882-FB45961CB96B}"
+	RootNamespace="SimplexSVM"
 	Keyword="Win32Proj"
 	>
 	<Platforms>
@@ -396,7 +397,7 @@
 			UniqueIdentifier="{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}"
 			>
 			<File
-				RelativePath="..\..\..\..\..\Program Files\MATLAB\R2007b\extern\include\mexversion.rc"
+				RelativePath="..\..\..\..\..\..\Program Files\MATLAB\R2007b\extern\include\mexversion.rc"
 				>
 			</File>
 		</Filter>
