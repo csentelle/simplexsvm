@@ -1,4 +1,4 @@
-function [alpha, b, iter, t, gcache, m] = quadsimplex12(P, T, C, ktype, lambda)
+function [alpha, b, iter, t, gcache, m] = quadsimplex12c(P, T, C, ktype, lambda)
 
 	global m_P;
 	global m_T;
@@ -21,14 +21,14 @@ function [alpha, b, iter, t, gcache, m] = quadsimplex12(P, T, C, ktype, lambda)
     N = length(T);
 	if (ktype == 0),
 
-        Q = -P'*P .* (T'*T);
+        Q = P'*P .* (T'*T);
         
 	elseif (ktype == 1),
         
         for i = 1:N,
             for j = 1:N,
 	
-                Q(i,j) = -exp(-lambda * (P(:,i) - P(:,j))' * (P(:,i) - P(:,j))) * T(i) * T(j);
+                Q(i,j) = exp(-lambda * (P(:,i) - P(:,j))' * (P(:,i) - P(:,j))) * T(i) * T(j);
                 
             end;
         end;
@@ -75,7 +75,7 @@ function [alpha, b, iter, t, gcache, m] = quadsimplex12(P, T, C, ktype, lambda)
     
     tic; 
     eps = 1e-6;
-	while (min_g < -eps )
+	while (min_g < -eps)
         
         
         iter = iter + 1;
@@ -85,8 +85,9 @@ function [alpha, b, iter, t, gcache, m] = quadsimplex12(P, T, C, ktype, lambda)
 
         [min_g, idx] = min(m_fcache);
         
+        
         disp(['iteration = ', num2str(iter), ' min_g = ', num2str(min_g), ' SVs = ', num2str(sum(m_alpha > 0))]);
-
+   
     end;
     
     t = toc
@@ -120,6 +121,8 @@ function takeStep(idx)
       
     q = Q(idx_nb, idx);
         
+%     disp(['Pivoting on idx = ', num2str(idx)]);
+    
     % We are adding a support vector, alpha is increased from zero.
     if (m_svtype(idx) == 0)
     
@@ -135,7 +138,8 @@ function takeStep(idx)
         [h(idx_nb), gb] = solveSub(Q(idx_nb,idx_nb), m_T(idx_nb), q, m_T(idx));
                                                                   
         % Compute gamma
-        gamma = Q(idx, idx) - m_T(idx) * gb - Q(idx, idx_nb) * h(idx_nb)';
+        gamma = -Q(idx, idx) - m_T(idx) * gb + Q(idx, idx_nb) * h(idx_nb)';
+
         
     elseif (m_svtype(idx) == 2)
         
@@ -153,14 +157,19 @@ function takeStep(idx)
         %
         [h(idx_nb), gb] = solveSub(Q(idx_nb,idx_nb), m_T(idx_nb), -q, -m_T(idx));
                                         
-        gamma = Q(idx,idx) + m_T(idx) * gb + Q(idx, idx_nb) * h(idx_nb)';
+        gamma = -Q(idx,idx) + m_T(idx) * gb - Q(idx, idx_nb) * h(idx_nb)';
 
     end;
     
-    m_svtype(idx) = 1;
-    idx_nb = [idx_nb; idx];
-    m_R = UpdateCholesky(m_R, -Q(idx_nb, idx_nb), m_T(idx_nb));
+   % m_svtype(idx) = 1;
+   % idx_nb = [idx_nb; idx];
+    
+    %disp(['Adding index to factorizaton ', num2str(idx)]);
+    
+    %m_R = UpdateCholesky(m_R, Q(idx_nb, idx_nb), m_T(idx_nb));
             
+    bIndexAdded = false;
+    
     while (abs(m_fcache(idx)) > eps)
     
         iter = iter + 1;
@@ -182,6 +191,8 @@ function takeStep(idx)
            end;
     
            idxir = find(idx_nb == idxr);
+           
+           
            m_R = DownDateCholesky(m_R, m_T(idx_nb), idxir);
            idx_nb(idxir) = [];
            
@@ -200,8 +211,15 @@ function takeStep(idx)
  
            % We found a minimum, no value is leaving the basis
            
-		end
-	
+        end
+
+        if ~bIndexAdded, 
+           m_svtype(idx) = 1;
+           idx_nb = [idx_nb; idx];
+           m_R = UpdateCholesky(m_R, Q(idx_nb, idx_nb), m_T(idx_nb));
+           bIndexAdded = true;
+        end
+            
 
         %
         % Now we need to drive the corresponding Lagrange to zero to force
@@ -217,12 +235,12 @@ function takeStep(idx)
                 
         if (~bSlack)
                        
-            [h(idx_nb),gb] = solveSub(Q(idx_nb,idx_nb), m_T(idx_nb), e(idx_nb), 0);                        
+            [h(idx_nb),gb] = solveSub(Q(idx_nb,idx_nb), m_T(idx_nb), -e(idx_nb), 0);                        
             gamma = -1;
-            
+                        
         else
             
-            [h(idx_nb),gb] = solveSub(Q(idx_nb,idx_nb), m_T(idx_nb), -e(idx_nb), 0);                                    
+            [h(idx_nb),gb] = solveSub(Q(idx_nb,idx_nb), m_T(idx_nb), e(idx_nb), 0);                                    
             gamma = -1;
             
         end;
@@ -271,6 +289,7 @@ function m_R = UpdateCholesky(m_R, Q, T)
                    Q(i+1,1)*-T(1)*T(idx) + Q(i+1,idx);
        end
        
+       
        %
        % Now solve the system through a forward substitution of 
        % triangular system
@@ -286,12 +305,15 @@ function m_R = UpdateCholesky(m_R, Q, T)
            m_R(i,end) = m_R(i,end) / m_R(i,i);
        end
 
+       
        for i = 1:prevSize-1,
            m_R(end,end)  = m_R(end,end) + m_R(i,end) * m_R(i,end);
        end
 
+       
        m_R(end,end) = sqrt(Q(1,1) - 2 * T(1) * T(idx) * Q(1,idx) + Q(idx,idx) - m_R(end,end));
 
+       
    end
       
    
@@ -314,7 +336,7 @@ function m_R = DownDateCholesky(m_R, T, idx)
         m_R(:,idx-1) = [];
 
         for i = idx - 1: size(m_R, 1) - 1,
-            m_R(i:i+1,:) = givens(m_R(i, i), m_R(i+1, i)) * m_R(i:i+1,:);
+            m_R(i:i+1,:) = mygivens(m_R(i, i), m_R(i+1, i)) * m_R(i:i+1,:);
         end
 
         m_R = m_R(1:end-1,:);
@@ -326,7 +348,7 @@ function m_R = DownDateCholesky(m_R, T, idx)
         % that needs to be stored in a separate location.
         %
         R11 = m_R(1,1);
-        for j = 1:length(T)-2, 
+        for j = 1:size(m_R,2)-1, 
             m_R(1,j) = -T(2)*T(j+2) * R11 + m_R(1,j+1);
         end
         
@@ -336,16 +358,41 @@ function m_R = DownDateCholesky(m_R, T, idx)
                 m_R(i,j) = m_R(i, j+1);
             end
         end
-        
-                        
+                                
         for i = 1:size(m_R,1) - 1,
-            m_R(i:i+1,:) = givens(m_R(i, i), m_R(i+1, i)) * m_R(i:i+1,:);
+            m_R(i:i+1,:) = mygivens(m_R(i, i), m_R(i+1, i)) * m_R(i:i+1,:);
         end
 
         m_R = m_R(1:end-1,1:end-1);        
 
     end
+
+function G = mygivens(a, b)
     
+    if (b == 0.0)
+    
+        c = 1.0; 
+        s = 0.0;
+       
+    else
+       
+        if (abs(b) > abs(a))
+               
+            tau = -a / b;
+            s = 1 / sqrt(1 + tau * tau); 
+            c = s * tau;
+           
+        else
+           
+            tau = -b / a;
+            c = 1 / sqrt(1 + tau * tau);
+            s = c * tau;
+        end
+        
+    end
+    
+    G = [c -s; s c];
+        
 
 function [h, g] = solveSub(Q, y, q, r)
  
@@ -356,19 +403,20 @@ function [h, g] = solveSub(Q, y, q, r)
     %  1. y'Yhy = r for hy
     %      hy = y(1)r
     %      Y = [1; 0; 0; ...]
-    %  2. Z'QZhz = Z'(q-QYhy) for hz
+    %  2. -Z'QZhz = Z'(QYhy+q) for hz
     %      R'R = -Z'QZ
-    %      -R'Rhz = Z'(q-QYhy)
-    %      rhs = Z'(q-QYhy)
+    %      -R'Rhz = Z'(QYhy-q)
+    %      rhs = Z'(QYhy-q)
     %      -R'Rhz = rhs
     %      -R'x = rhs
     %      Rhz = x
     %  3. h = Zhz + Yhy
-    %  4. Y'Qh + Y'yg = Y'q for g
-    %     Q(1,:)h + y(1)g = q(1)     
+    %  4. -Y'Qh + Y'yg = -Y'q for g
+    %     -Q(1,:)h + y(1)g = -q(1)     
     %     
     if (length(y) > 1)
-        Z = [-y(1)*y(2:end); eye(length(y)-1)];
+ 
+        % Solve for hy
         hy = r*y(1);
         
         % rhs = Z'*(q-Q(:,1)*hy);
@@ -376,7 +424,7 @@ function [h, g] = solveSub(Q, y, q, r)
         
         rhs = zeros(length(y)-1, 1);
         for i = 1:length(y) - 1,
-            rhs(i) = -y(1)*y(i+1)*(q(1)-Q(1,1)*hy) + q(i+1)-Q(i+1,1)*hy;
+            rhs(i) = -y(1) * y(i+1) * (-q(1) + Q(1,1)*hy) - q(i+1) + Q(i+1,1)*hy;
         end;
          
         % Perform backward, forward solve to obtain hz.
@@ -385,18 +433,20 @@ function [h, g] = solveSub(Q, y, q, r)
         hz = fwrdSolve(-m_R, rhs);
         hz = bkwrdSolve(m_R, hz);
         
+        
         % Form the actual solution
         h = zeros(size(hz,1)+1,1);
         h(1) = -y(1)*y(2:end) * hz + hy;
         h(2:end) = hz;
-        g = y(1)*(q(1) - Q(1,:)*h);
+        g = y(1)*(-q(1) + Q(1,:)*h);
+        
     else
         % Just solve the following
         % 1. h = y(1)*r
         % 2. g = y(1)*(q - Q*h)
         %         
         h = y(1)*r;
-        g = y(1)*(q - Q*h);
+        g = y(1)*(-q + Q*h);
     end
     
 function x = fwrdSolve(R, b)
@@ -450,11 +500,11 @@ global Q;
     idxs = find(m_svtype == 1);
     idxC = find(m_svtype == 2);
     
-    m_fcache(idxzero) = -ones(length(idxzero),1) - m_beta * m_T(idxzero)'  - ...
-                        Q(idxzero, idxs) * m_alpha(idxs) - Q(idxzero, idxC) * m_alpha(idxC);
+    m_fcache(idxzero) = -ones(length(idxzero),1) - m_beta * m_T(idxzero)'  + ...
+                        Q(idxzero, idxs) * m_alpha(idxs) + Q(idxzero, idxC) * m_alpha(idxC);
     
-    m_fcache(idxC) = ones(length(idxC),1) + m_beta * m_T(idxC)' + ...
-                        Q(idxC, idxs) * m_alpha(idxs) + Q(idxC, idxC) * m_alpha(idxC);
+    m_fcache(idxC) = ones(length(idxC),1) + m_beta * m_T(idxC)' - ...
+                        Q(idxC, idxs) * m_alpha(idxs) - Q(idxC, idxC) * m_alpha(idxC);
     
     
 
