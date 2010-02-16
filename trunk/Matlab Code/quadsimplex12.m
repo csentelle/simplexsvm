@@ -329,7 +329,7 @@ function [h, g] = solveSub(Q, y, q, r)
         hy = r*y(1);
         rhs = Z'*(q-Q(:,1)*hy);
         hz = -m_R'\rhs;
-        hz = m_R\hz;      
+        hz = m_R\hz;
         h = Z*hz;
         h(1) = h(1) + hy;
         g = y(1)*(q(1) - Q(1,:)*h);
@@ -340,6 +340,7 @@ function [h, g] = solveSub(Q, y, q, r)
         %         
         h = y(1)*r;
         g = y(1)*(q - Q*h);
+        
     end
     
     
