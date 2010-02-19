@@ -76,15 +76,12 @@ function [alpha, b, iter, t, gcache, m] = quadsimplex12c(P, T, C, ktype, lambda)
     tic; 
     eps = 1e-6;
 	while (min_g < -eps)
-        
-        
-        iter = iter + 1;
-        
+          
+       
         % Perform pivoting on the pivot element
         takeStep(idx);
 
-        [min_g, idx] = min(m_fcache);
-        
+        [min_g, idx] = min(m_fcache);        
         
         disp(['iteration = ', num2str(iter), ' min_g = ', num2str(min_g), ' SVs = ', num2str(sum(m_alpha > 0))]);
    
@@ -158,7 +155,7 @@ function takeStep(idx)
         [h(idx_nb), gb] = solveSub(Q(idx_nb,idx_nb), m_T(idx_nb), -q, -m_T(idx));
                                         
         gamma = -Q(idx,idx) + m_T(idx) * gb - Q(idx, idx_nb) * h(idx_nb)';
-
+        
     end;
     
    % m_svtype(idx) = 1;
@@ -176,12 +173,18 @@ function takeStep(idx)
                 
         idxh = find(h > 0);
         idxh2 = find(-h > 0);
+        
+        %
+        % Note that the ordering, here, is slightly different than the C++
+        % implementation, as a result, it is possible to select a different
+        % index from the C++ implementation when the indices have the same values. 
+        %
         [theta, idxr] = min([m_alpha(idxh)'./h(idxh),(m_C - m_alpha(idxh2))'./-h(idxh2)]);
 
         t = [idxh, idxh2];
         idxr = t(idxr);
-               
-		if (~isempty(theta) && ((gamma >= 0) || (theta < m_fcache(idx)/ gamma))),
+         
+		if (~isempty(theta) && ((gamma >= -eps) || (theta < m_fcache(idx)/ gamma - eps))),
         
                       
            if (-h(idxr) > 0),
@@ -192,9 +195,11 @@ function takeStep(idx)
     
            idxir = find(idx_nb == idxr);
            
-           
-           m_R = DownDateCholesky(m_R, m_T(idx_nb), idxir);
-           idx_nb(idxir) = [];
+           if (~isempty(idxir)),
+                m_R = DownDateCholesky(m_R, m_T(idx_nb), idxir);
+
+                idx_nb(idxir) = [];
+           end
            
            % a value is leaving the basis
            m_beta = m_beta - theta * gb;
@@ -202,8 +207,9 @@ function takeStep(idx)
            m_fcache(idx) = m_fcache(idx) - theta * gamma;
                       
            
-		else
+        else
 	           
+           idxr = 0;
            theta = m_fcache(idx) / gamma;
            m_beta = m_beta - theta * gb;
            m_alpha = m_alpha - theta * h';
@@ -213,11 +219,12 @@ function takeStep(idx)
            
         end
 
-        if ~bIndexAdded, 
+        if (~bIndexAdded && idx ~= idxr) 
            m_svtype(idx) = 1;
            idx_nb = [idx_nb; idx];
            m_R = UpdateCholesky(m_R, Q(idx_nb, idx_nb), m_T(idx_nb));
            bIndexAdded = true;
+
         end
             
 
@@ -242,7 +249,7 @@ function takeStep(idx)
             
             [h(idx_nb),gb] = solveSub(Q(idx_nb,idx_nb), m_T(idx_nb), e(idx_nb), 0);                                    
             gamma = -1;
-            
+         
         end;
         
         
@@ -331,40 +338,44 @@ function m_R = DownDateCholesky(m_R, T, idx)
 %               I            0];
 %   
 
-    if (idx > 1)
+    if (size(m_R,1) > 1)
+        if (idx > 1)
 
-        m_R(:,idx-1) = [];
+            m_R(:,idx-1) = [];
 
-        for i = idx - 1: size(m_R, 1) - 1,
-            m_R(i:i+1,:) = mygivens(m_R(i, i), m_R(i+1, i)) * m_R(i:i+1,:);
-        end
-
-        m_R = m_R(1:end-1,:);
-
-    else
-
-        %
-        % Compute first row of m_R, in place. R(1,1) is the only element
-        % that needs to be stored in a separate location.
-        %
-        R11 = m_R(1,1);
-        for j = 1:size(m_R,2)-1, 
-            m_R(1,j) = -T(2)*T(j+2) * R11 + m_R(1,j+1);
-        end
-        
-        % Now shift all of the entries to the left.
-        for i = 2:size(m_R,1),
-            for j = 1:size(m_R,2) - 1,
-                m_R(i,j) = m_R(i, j+1);
+            for i = idx - 1: size(m_R, 1) - 1,
+                m_R(i:i+1,:) = mygivens(m_R(i, i), m_R(i+1, i)) * m_R(i:i+1,:);
             end
-        end
-                                
-        for i = 1:size(m_R,1) - 1,
-            m_R(i:i+1,:) = mygivens(m_R(i, i), m_R(i+1, i)) * m_R(i:i+1,:);
-        end
 
-        m_R = m_R(1:end-1,1:end-1);        
+            m_R = m_R(1:end-1,:);
 
+        else
+
+            %
+            % Compute first row of m_R, in place. R(1,1) is the only element
+            % that needs to be stored in a separate location.
+            %
+            R11 = m_R(1,1);
+            for j = 1:size(m_R,2)-1, 
+                m_R(1,j) = -T(2)*T(j+2) * R11 + m_R(1,j+1);
+            end
+
+            % Now shift all of the entries to the left.
+            for i = 2:size(m_R,1),
+                for j = 1:size(m_R,2) - 1,
+                    m_R(i,j) = m_R(i, j+1);
+                end
+            end
+
+            for i = 1:size(m_R,1) - 1,
+                m_R(i:i+1,:) = mygivens(m_R(i, i), m_R(i+1, i)) * m_R(i:i+1,:);
+            end
+
+            m_R = m_R(1:end-1,1:end-1);        
+
+        end
+    else
+        m_R = 0;
     end
 
 function G = mygivens(a, b)
