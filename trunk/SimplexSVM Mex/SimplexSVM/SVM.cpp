@@ -237,7 +237,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
               Array<double, 1>& upperfcache,
 			  int& iter)
 {
-    double eps = 1e-15;
+    double eps = 1e-6;
     bool bSlack = false;
     double gamma = 0.0;
     int N = T.size();
@@ -400,7 +400,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
             if (h(i) > 0)
             {
                 double thetaTmp = alpha(idxt) / h(i);
-                if ( thetaTmp + 1e-6 < theta) 
+                if ( thetaTmp + eps < theta) 
                 {
                     m_os << infolevel(6) << "theta = thetaTmp = " << setprecision(12) << thetaTmp << endl;
                     m_os << infolevel(6) << "idxh = " << i << endl;
@@ -415,7 +415,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
             else if (-h(i) > 0)
             {
                 double thetaTmp = (m_C - alpha(idxt) ) / -h(i);
-                if (thetaTmp + 1e-6 < theta)
+                if (thetaTmp + eps < theta)
                 {
                     m_os << infolevel(6) << "theta = thetaTmp = " << thetaTmp << endl;
                     m_os << infolevel(6) << "idxh = " << i << endl;
@@ -431,7 +431,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
         m_os << infolevel(2) << "theta = " << theta << endl;
         m_os << infolevel(2) << "fcache(idx) / gamma = " << fcache(idx) / gamma << endl;
 
-		if ( (gamma >= 0) || (theta < fcache(idx)/ gamma))
+		if ( (gamma > -eps) || (theta < fcache(idx)/ gamma - eps))
         {
 
             m_os << infolevel(2) << "Value leaving basis: " << idxr << endl;
@@ -1229,100 +1229,108 @@ void SVM::reduceCholFactor(const Array<double, 1>& T, const int idx)
 
     int N = m_R.extent(0);
 
-    if (idx > 0)
+	if (N > 1)
 	{
-	   // The cholesky reduction works by deleting the appropriate
-	   // column of R and, then, performing a series of Givens
-	   // rotations to convert the Hessenberg matrix back to 
-	   // a upper right triangular matrix. That is, deleting 
-	   // a column will introduce non-zero entries below the
-	   // diagonal and using a givens rotation to zero out these
-	   // entries will correct factorization.
-
-
-	   // Shift the columns to the left, starting at idx, effectively
-	   // deleting the column
-	   for (int j = idx - 1; j < N - 1; j++)
-	   {
-		   for (int i = 0; i <= j + 1; i++)
-		   {
-			   m_R(i, j) = m_R(i, j + 1);
-		   }
-	   }
-
-
-	   // Now we apply Givens rotations to zero out entries below the 
-	   // diagonal.
-	   for (int i = idx - 1; i < N - 1; i++)
-	   {
-		   double c = 0.0;
-		   double s = 0.0;
-
-		   // Compute the Givens rotation
-		   computeGivens(m_R(i, i), m_R(i + 1, i), c, s);
-	        
-		   // Apply the Givens rotation
-		   for (int k = i; k < N - 1; k++)
-		   {
-				double tau1 = m_R(i, k);
-				double tau2 = m_R(i + 1, k);
-				m_R(i, k) = c * tau1 - s * tau2;
-				m_R(i + 1, k) = s * tau1 + c * tau2;
-		   }
-	   }    
-	}
-    else
-	{
-
-		// This first part computes the product of R*A. The product can be 
-		// computed simply by noting that the first row is computed by adding
-		// two elements of each column of R and the remaining rows consist
-		// merely of a left shift of the original rows in R.
-	    //
-        // Compute first row of m_R, in place. R(1,1) is the only element
-        // that needs to be stored for future reference. As an alternative
-		// to storing, the computation can be performed in reverse.
-        //
-        double R11 = m_R(0,0);
-		for (int j = 0; j < N - 1; j++)
+		if (idx > 0)
 		{
-            m_R(0,j) = -T(m_idxnb[1])*T(m_idxnb[j+2]) * R11 + m_R(0,j+1);
+		   // The cholesky reduction works by deleting the appropriate
+		   // column of R and, then, performing a series of Givens
+		   // rotations to convert the Hessenberg matrix back to 
+		   // a upper right triangular matrix. That is, deleting 
+		   // a column will introduce non-zero entries below the
+		   // diagonal and using a givens rotation to zero out these
+		   // entries will correct factorization.
+
+
+		   // Shift the columns to the left, starting at idx, effectively
+		   // deleting the column
+		   for (int j = idx - 1; j < N - 1; j++)
+		   {
+			   for (int i = 0; i <= j + 1; i++)
+			   {
+				   m_R(i, j) = m_R(i, j + 1);
+			   }
+		   }
+
+
+		   // Now we apply Givens rotations to zero out entries below the 
+		   // diagonal.
+		   for (int i = idx - 1; i < N - 1; i++)
+		   {
+			   double c = 0.0;
+			   double s = 0.0;
+
+			   // Compute the Givens rotation
+			   computeGivens(m_R(i, i), m_R(i + 1, i), c, s);
+		        
+			   // Apply the Givens rotation
+			   for (int k = i; k < N - 1; k++)
+			   {
+					double tau1 = m_R(i, k);
+					double tau2 = m_R(i + 1, k);
+					m_R(i, k) = c * tau1 - s * tau2;
+					m_R(i + 1, k) = s * tau1 + c * tau2;
+			   }
+		   }    
 		}
-        
-        // Now shift all of the entries to the left, below the first row.
-        for (int i = 1; i < N; i++)
+		else
 		{
-            for (int j = 0; j < N - 1; j++)
+
+			// This first part computes the product of R*A. The product can be 
+			// computed simply by noting that the first row is computed by adding
+			// two elements of each column of R and the remaining rows consist
+			// merely of a left shift of the original rows in R.
+			//
+			// Compute first row of m_R, in place. R(1,1) is the only element
+			// that needs to be stored for future reference. As an alternative
+			// to storing, the computation can be performed in reverse.
+			//
+			double R11 = m_R(0,0);
+			for (int j = 0; j < N - 1; j++)
 			{
-                m_R(i,j) = m_R(i, j+1);
+				m_R(0,j) = -T(m_idxnb[1])*T(m_idxnb[j+2]) * R11 + m_R(0,j+1);
 			}
-		}
-        
-       // Perform a series of Givens rotations on the entire matrix
-       // to convert the upper Hessenberg back to right triangular.
-
-	   for (int i = 0; i < N - 1; i++)
-	   {
-		   double c = 0.0;
-		   double s = 0.0;
-
-		   // Compute the Givens rotation
-		   computeGivens(m_R(i, i), m_R(i + 1, i), c, s);
 	        
-		   // Apply the Givens rotation
-		   for (int k = i; k < N - 1; k++)
+			// Now shift all of the entries to the left, below the first row.
+			for (int i = 1; i < N; i++)
+			{
+				for (int j = 0; j < N - 1; j++)
+				{
+					m_R(i,j) = m_R(i, j+1);
+				}
+			}
+	        
+		   // Perform a series of Givens rotations on the entire matrix
+		   // to convert the upper Hessenberg back to right triangular.
+
+		   for (int i = 0; i < N - 1; i++)
 		   {
-				double tau1 = m_R(i, k);
-				double tau2 = m_R(i + 1, k);
-				m_R(i, k) = c * tau1 - s * tau2;
-				m_R(i + 1, k) = s * tau1 + c * tau2;
-		   }
-	   }    
-	}    
+			   double c = 0.0;
+			   double s = 0.0;
+
+			   // Compute the Givens rotation
+			   computeGivens(m_R(i, i), m_R(i + 1, i), c, s);
+		        
+			   // Apply the Givens rotation
+			   for (int k = i; k < N - 1; k++)
+			   {
+					double tau1 = m_R(i, k);
+					double tau2 = m_R(i + 1, k);
+					m_R(i, k) = c * tau1 - s * tau2;
+					m_R(i + 1, k) = s * tau1 + c * tau2;
+			   }
+		   }    
+		}    
 
 
-    // Resize the factorization
-    m_R.reference(m_RStorage(Range(0, N-2), Range(0, N-2)));
+		// Resize the factorization
+		m_R.reference(m_RStorage(Range(0, N-2), Range(0, N-2)));
+	}
+	else
+	{
+		m_R.reference(m_RStorage(Range(0,0), Range(0,0)));
+		m_R(0,0) = 0;
+	}
 
     END_PROF();
 }
@@ -1354,63 +1362,67 @@ void SVM::addToCholFactor(const Array<double, 1>& T, const int idx)
                                      N + 1 + STORAGE_NEW_INCREMENT);
     }
 
-	// Reference a matrix which will be size N - 1 after adding 
-	// the new entry
-	m_R.reference(m_RStorage(Range(0, N - 1), Range(0, N - 1)));
-
-	// Zero out new row/column
-	for (int i = 0; i < N - 1; i++)
-		m_R(i,N-1) = m_R(N-1,i) = 0;
-	m_R(N-1,N-1) = 0;
-
-	if (N == 1)
-	{	
-		m_R(0, 0) = sqrt(m_kernel.getQss(m_idxnb[0]) + m_kernel.getQss(idx) - 
-			2 * T(m_idxnb[0]) * T(idx) * m_kernel(m_idxnb[0], idx));
-	}
-	else
+	if (N > 0)
 	{
-                     
-		//
-		// Solve the following system
-		// Z = [-T(1) * T(2:end-1); eye(length(T) - 2) ] ;
-		// r = m_R' \(-T(1)*T(end) * Z' * Q(1:end-1,1) + Z' * q) ;
-		//
-		Array<double, 1> q(N - 1);
+		// Reference a matrix which will be size N - 1 after adding 
+		// the new entry
+		m_R.reference(m_RStorage(Range(0, N - 1), Range(0, N - 1)));
 
-		// Form the RHS. Note that we are explicitly forming -rhs.
+		// Zero out new row/column
 		for (int i = 0; i < N - 1; i++)
-		{
-		   q(i) = -T(m_idxnb[0]) * T(m_idxnb[i+1]) * 
-					(m_kernel.getQss(m_idxnb[0]) * -T(m_idxnb[0]) * T(idx) + m_kernel[m_idxnb[0]][idx]) + 
-				    m_kernel[m_idxnb[i+1]][m_idxnb[0]] * -T(m_idxnb[0]) * T(idx) + 
-				    m_kernel[m_idxnb[i+1]][idx];
+			m_R(i,N-1) = m_R(N-1,i) = 0;
+		m_R(N-1,N-1) = 0;
+
+
+		if (N == 1)
+		{	
+			m_R(0, 0) = sqrt(m_kernel.getQss(m_idxnb[0]) + m_kernel.getQss(idx) - 
+				2 * T(m_idxnb[0]) * T(idx) * m_kernel(m_idxnb[0], idx));
 		}
-
-       
-		//
-		// Now solve the system through a forward substitution of 
-		// triangular system
-		// R' = x 0 0
-		//      x x 0
-		//      x x x
-		//
-		for (int i = 0; i < N - 1; i++)
+		else
 		{
-			m_R(i, N - 1) = q(i);
-			for (int j = 0; j <= i - 1; j++)
-				m_R(i, N - 1) -= m_R(j,i) * m_R(j, N - 1);
-			m_R(i, N - 1) /= m_R(i, i);
+	                     
+			//
+			// Solve the following system
+			// Z = [-T(1) * T(2:end-1); eye(length(T) - 2) ] ;
+			// r = m_R' \(-T(1)*T(end) * Z' * Q(1:end-1,1) + Z' * q) ;
+			//
+			Array<double, 1> q(N - 1);
+
+			// Form the RHS. Note that we are explicitly forming -rhs.
+			for (int i = 0; i < N - 1; i++)
+			{
+			   q(i) = -T(m_idxnb[0]) * T(m_idxnb[i+1]) * 
+						(m_kernel.getQss(m_idxnb[0]) * -T(m_idxnb[0]) * T(idx) + m_kernel[m_idxnb[0]][idx]) + 
+						m_kernel[m_idxnb[i+1]][m_idxnb[0]] * -T(m_idxnb[0]) * T(idx) + 
+						m_kernel[m_idxnb[i+1]][idx];
+			}
+
+	       
+			//
+			// Now solve the system through a forward substitution of 
+			// triangular system
+			// R' = x 0 0
+			//      x x 0
+			//      x x x
+			//
+			for (int i = 0; i < N - 1; i++)
+			{
+				m_R(i, N - 1) = q(i);
+				for (int j = 0; j <= i - 1; j++)
+					m_R(i, N - 1) -= m_R(j,i) * m_R(j, N - 1);
+				m_R(i, N - 1) /= m_R(i, i);
+			}
+
+			// Solve for rho
+			double sigma = 0;
+			for (int i = 0; i < N - 1; i++)
+				sigma += m_R(i, N - 1) * m_R(i, N - 1);
+
+			m_R(N - 1,N - 1) = sqrt(m_kernel.getQss(m_idxnb[0]) - 2 * T(m_idxnb[0]) * T(idx) * 
+									m_kernel[m_idxnb[0]][idx] + m_kernel.getQss(idx) - sigma);
+
 		}
-
-		// Solve for rho
-		double sigma = 0;
-		for (int i = 0; i < N - 1; i++)
-			sigma += m_R(i, N - 1) * m_R(i, N - 1);
-
-		m_R(N - 1,N - 1) = sqrt(m_kernel.getQss(m_idxnb[0]) - 2 * T(m_idxnb[0]) * T(idx) * 
-			                    m_kernel[m_idxnb[0]][idx] + m_kernel.getQss(idx) - sigma);
-
 	}
 }
 
