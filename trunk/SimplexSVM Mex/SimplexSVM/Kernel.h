@@ -21,7 +21,7 @@ public:
 
 	Kernel(const Array<double, 2>& P, 
            const Array<double, 1>& T,
-           int cacheSize = 4000) 
+           int cacheSize = 100) 
     : m_P(P)
     , m_T(T)
     {
@@ -32,7 +32,9 @@ public:
         for (int i = 0; i < T.size(); i++)
             m_cache[i] = NULL;
             
-        m_cacheLineSize = cacheSize; 
+		// Determine number of available cache lines based upon 
+		// available memory size (in MBytes)
+        m_cacheLineSize = cacheSize * 1024 * 1024 / (m_T.size() * sizeof(double)); 
 
         m_cacheLines = new double[m_T.size() * m_cacheLineSize];
         m_cacheLineIdx = 0;
