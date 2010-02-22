@@ -27,9 +27,10 @@ struct IndexCompare
 };
 
 
-SVM::SVM(Kernel& kernel, double C, ProxyStream& os)
+SVM::SVM(Kernel& kernel, double C, double tol, ProxyStream& os)
 : m_kernel(kernel)
 , m_C(C)
+, m_tol(tol)
 , m_os(os)
 , m_RStorage(1,1,ColumnMajorArray<2>())
 , m_R(1,1,ColumnMajorArray<2>())
@@ -120,8 +121,7 @@ void SVM::train(const Array<double, 2>& P,
     iter = 0;
     time_t ts = clock();
 	
-	double tol = 1e-6;
-	while (min_g < -tol)
+	while (min_g < -m_tol)
     {
                
         m_os << infolevel(1) << "iter = " << iter 
@@ -142,7 +142,7 @@ void SVM::train(const Array<double, 2>& P,
 		//  is the set of indices currently being worked on by the partial 
 		//  pricing technique and m_fcache_indices are the current set of indices
 		//  being worked on for shrinking.
-        if (min_g > -tol)
+        if (min_g > -m_tol)
         {
             
             m_workset.erase(m_workset.begin(), m_workset.end());
@@ -152,7 +152,7 @@ void SVM::train(const Array<double, 2>& P,
                                       alpha, 
                                       beta, fcache, upperfcache, min_g);
 
-            if (min_g > -tol)
+            if (min_g > -m_tol)
             {
                 m_fcache_indices.erase(m_fcache_indices.begin(),
                                        m_fcache_indices.end());
@@ -179,7 +179,7 @@ void SVM::train(const Array<double, 2>& P,
             for (int i = 0; i < m_fcache_indices.size(); i++)
             {
 
-                if (fcache(m_fcache_indices[i]) > -tol)
+                if (fcache(m_fcache_indices[i]) > -m_tol)
                 {
                     m_fcache_indices.erase(remove(m_fcache_indices.begin(),
                                                   m_fcache_indices.end(),
