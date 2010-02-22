@@ -124,8 +124,6 @@ void SVM::train(const Array<double, 2>& P,
 	while (min_g < -tol)
     {
                
-        //iter++;
-
         m_os << infolevel(1) << "iter = " << iter 
                              << " min_g = " << min_g 
                              << " idx = " << idx << endl;
@@ -137,56 +135,60 @@ void SVM::train(const Array<double, 2>& P,
 
 		idx = updateCacheStrategy(working_size, T, alpha, beta, fcache, upperfcache, min_g);
         
-		
-        //if (min_g > -tol)
-        //{
-        //   //m_os << infolevel(0) << "Reinitializing cache: min_g = " 
-        //   //      << min_g << " idx = " << idx << endl;
-        //    
-        //    m_workset.erase(m_workset.begin(), m_workset.end());
-        //    
-        //    idx = updateCacheStrategy(working_size, 
-        //                              T, 
-        //                              alpha, 
-        //                              Pr, fcache, upperfcache, min_g);
+		// 	If we appear to have hit the stopping criterion, then, proceed with
+		//  first withi a reinitialization of a working set corresponding to the 
+		//  partial pricing technique. If this doesn't work, then we need to 
+		//  recompute the entire error cache for sprinting purposes. m_workset
+		//  is the set of indices currently being worked on by the partial 
+		//  pricing technique and m_fcache_indices are the current set of indices
+		//  being worked on for shrinking.
+        if (min_g > -tol)
+        {
+            
+            m_workset.erase(m_workset.begin(), m_workset.end());
+            
+            idx = updateCacheStrategy(working_size, 
+                                      T, 
+                                      alpha, 
+                                      beta, fcache, upperfcache, min_g);
 
-        //    if (min_g > -tol)
-        //    {
-        //        m_fcache_indices.erase(m_fcache_indices.begin(),
-        //                               m_fcache_indices.end());
+            if (min_g > -tol)
+            {
+                m_fcache_indices.erase(m_fcache_indices.begin(),
+                                       m_fcache_indices.end());
 
-        //        for (int i = 0; i < fcache.size(); i++)
-        //            m_fcache_indices.push_back(i);
+                for (int i = 0; i < fcache.size(); i++)
+                    m_fcache_indices.push_back(i);
 
-        //        m_workset.erase(m_workset.begin(), m_workset.end());
-        //        
-        //        idx = updateCacheStrategy(working_size, 
-        //                                T, 
-        //                                alpha, 
-        //                                Pr, fcache, upperfcache, min_g);
+                m_workset.erase(m_workset.begin(), m_workset.end());
+                
+                idx = updateCacheStrategy(working_size, 
+                                        T, 
+                                        alpha, 
+                                        beta, fcache, upperfcache, min_g);
 
-        //    }
-        //}
+            }
+        }
 
-        //// Perform shrinking
-        //else if (iter % shrinking_iter == 0)
-        //{
+        // Perform shrinking
+        else if (iter % shrinking_iter == 0)
+        {
 
-        //    reinitializeCache(fcache, upperfcache, T, alpha, Pr);
+            reinitializeCache(fcache, upperfcache, T, alpha, beta);
 
-        //    for (int i = 0; i < m_fcache_indices.size(); i++)
-        //    {
+            for (int i = 0; i < m_fcache_indices.size(); i++)
+            {
 
-        //        if (fcache(m_fcache_indices[i]) > -1e-3)
-        //        {
-        //            m_fcache_indices.erase(remove(m_fcache_indices.begin(),
-        //                                          m_fcache_indices.end(),
-        //                                          m_fcache_indices[i]),
-        //                                   m_fcache_indices.end());
+                if (fcache(m_fcache_indices[i]) > -tol)
+                {
+                    m_fcache_indices.erase(remove(m_fcache_indices.begin(),
+                                                  m_fcache_indices.end(),
+                                                  m_fcache_indices[i]),
+                                           m_fcache_indices.end());
 
-        //        }
-        //    }
-        //}
+                }
+            }
+        }
     }
 
 
@@ -195,25 +197,7 @@ void SVM::train(const Array<double, 2>& P,
 
     // Compute B
     // We are computing B according to:    
-    b = 0.0;
-
-    // First find any support vector that is not a bound support vector
-    for (int i = 0; i < alpha.size(); i++)
-    {
-        if (m_status(i) == 1)
-        {
-            double sum = 0.0;
-            for (int j = 0; j < alpha.size(); j++)
-            {
-                sum += T(i) * alpha(j) * m_kernel(i, j);
-            }
-
-            b = T(i) - sum;
-            break;
-        }
-    }
-
-
+    b = beta;
 
 	//////END_PROF();
 	Profile.dumpprint(m_os, 0);
@@ -650,13 +634,11 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
                              double& ming)
 {
 
-    int idxn = 0;
+    int idxmin = 0;
 
     if (m_workset.empty())
     {
-		BEGIN_PROF("workset empty");
 
-        //m_os << infolevel(0) << "Generating new working set" << endl;
 
         reinitializeCache(fcache, upperfcache, T, alpha, beta);
 
@@ -696,23 +678,18 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
         sort(m_workset.begin(), m_workset.end());
 
 		
-        //m_os << infolevel(0) << fcache << endl;
-		END_PROF();
 
     }
     else
     {
-        //m_os << infolevel(0) << "Updating cache" << endl;
 
-        BEGIN_PROF("Update Cache");
 
-        ming = 1e300;
-
+		// Create a temporary vector to hold some of the 
+		// kernel values for performance reasons.
 		vector<double*> vctr(m_idxnb.size());
 		for (int i = 0; i < m_idxnb.size(); i++)
 			vctr[i] = m_kernel[m_idxnb[i]];
         
-		END_PROF();
 
         for (int i = 0; i < m_workset.size(); i++)
         {
@@ -723,239 +700,46 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
             
                 double cache = -1 - T(idx) * beta;
                 for (int k = 0; k < m_idxnb.size(); k++)
-                    //cache += m_kernel(m_idxnb[k],idx) * alpha(m_idxnb[k]);
-
 					cache += vctr[k][idx] * alpha(m_idxnb[k]);
-                    //cache += m_kernel[m_idxnb[k]][idx] * alpha(m_idxnb[k]);
-
                 cache += upperfcache(idx);
-                //for (int k = 0; k < m_idxb.size(); k++)
-                //    cache += m_kernel[m_idxb[k]][idx] * alpha(m_idxb[k]);
 
                 fcache(idx) = cache;
 
             }
             else if (m_status(idx) == 2)
             {
-				//BEGIN_PROF("Bound");
 
-                // See if we can calculate pi, on our own.
                 double cache =  -1 - T(idx) * beta;
                 for (int k = 0; k < m_idxnb.size(); k++)           
                     cache += vctr[k][idx] * alpha(m_idxnb[k]);
-                    //cache += m_kernel[m_idxnb[k]][idx] * alpha(m_idxnb[k]);
-					//cache += m_kernel(m_idxnb[k],idx) * alpha(m_idxnb[k]);
 
                 cache += upperfcache(idx);
 
-                //for (int k = 0; k < m_idxb.size(); k++)
-                //    cache += m_kernel[m_idxb[k]][idx] * alpha(m_idxb[k]);
-
                 fcache(idx) = -cache;
-				//END_PROF();
             }
             else
             {
-				//BEGIN_PROF("0");
                 fcache(idx) = 0.0;
-				//END_PROF();
             }
 
-			//BEGIN_PROF("Comparison");
-            if (fcache(idx) < ming)
-                ming = fcache(idx);
-			//END_PROF();
-
         }
-        //END_PROF();
     }
 
-    //m_os << infolevel(5) << "\n\nincoming" << endl;
-    //for (int i = 0; i < m_workset.size(); i++)
-    //{
-    //    m_os << infolevel(5) 
-    //         << m_workset[i] 
-    //         << " " 
-    //         << fcache(m_workset[i]) << endl;
+    // Find the minimum in the workset.
+    idxmin = 0;
+    ming = 1e300;
 
-    //}
-
-    //
-    //[ming, idx] = min(m_fcache(workset));
-    //
-
-        //if (ming > -1e-3 && mode < 5)
-
-    //    slowUpdateCache();
-    //    
-    //    [y, workset] = sort(m_fcache);
-    //    workset = workset(1:NWorkSize);
-    //  
-    //    [ming, idx] = min(m_fcache(workset));
-    //    
-    //    
-    //end;
-    
-    
-    //    
-    //    %
-    //    % Here we do partial pricing, but rather than waiting until the
-    //    % entire selection of variables is empty, we scan for a selection
-    //    % of new variables at each iteration to replace those variables
-    //    % that are now optimal. This also prevents the need of ever doing
-    //    % a complete update at each step. Note that Maros suggests doing a
-    //    % complete cache update each time a reinversion of the basis matrix
-    //    % occurs. Due to numerical precision issues, a metric is usually
-    //    % maintained that keeps track of when the basis inverse rank-1
-    //    % updates are no longer valid due to the accumulation of sufficient
-    //    % numerical precision errors. For this MATLAB code, we do not
-    //    % currently need to concern ourselves with this.
-    //    %
-    //    
-    //    %
-    //    % Form a list of indices of the working set that need replaced
-    //    %
-    //    
-        //BEGIN_PROF("idx replace");
-
-
-        //m_idxreplace.erase(m_idxreplace.begin(), m_idxreplace.end());
-        //m_idxpossible.erase(m_idxpossible.begin(), m_idxpossible.end());
-
-        ////vector<int> idxreplace;
-        ////m_idxreplace.reserve(m_workset.size());
-
-        //for (int i = 0; i < m_workset.size(); i++)
-        //    if (fcache(m_workset[i]) > -1e-3)
-        //        m_idxreplace.push_back(i);
- 
-        //END_PROF();
-        if (false)
-        //if (/*ming > -1e-3 && */!m_idxreplace.empty())
-        //if (!idxreplace.empty())
+	for (int i = 0; i < m_workset.size(); i++)
+    {
+        if (fcache(m_workset[i]) < ming)
         {
-            //BEGIN_PROF("Form Difference");
-            //vector<int> idxpossible;
-            //idxpossible.reserve(m_fcache_indices.size());
-            // Find the set of all indices not in the 
-            // working set.
-
-            // Sort the working set
-            set_difference(m_fcache_indices.begin(), 
-                m_fcache_indices.end(),
-                m_workset.begin(),
-                m_workset.end(),
-                back_inserter(m_idxpossible));
-
-            //END_PROF();
-
-            int idx_replace_iter = 0;
-
-            // Create random permutation of idxpossible
-            //random_shuffle(idxpossible.begin(), idxpossible.end());
-
-            //BEGIN_PROF("randStart");
-            // Create a random starting position
-            int randStart = rand() % (int)m_idxpossible.size();
-            //int randStart = clock() % idxpossible.size();
-            //END_PROF();
-
-            //BEGIN_PROF("Fill In");
-            int numReplaceSearch = ((int)m_idxpossible.size() < 100 ? 
-                                    (int)m_idxpossible.size() : 100);
-
-            for (int i = 0; i < numReplaceSearch; i++)
-            {
-                int idxc = m_idxpossible[(i + randStart) % m_idxpossible.size()];
-
-                //  compute fcache.
-                if (m_status(idxc) == 0)
-                {
-
-                    double cache = -1 - T(idxc) * beta;
-                    for (int k = 0; k < m_idxnb.size(); k++)
-                        cache += m_kernel[m_idxnb[k]][idxc] * alpha(m_idxnb[k]);
-
-                    for (int k = 0; k < m_idxb.size(); k++)
-                        cache += m_kernel[m_idxb[k]][idxc] * alpha(m_idxb[k]);
-
-                    fcache(idxc) = cache;
-
-                }
-                else if (m_status(idxc) == 2)
-                {
-
-                    // See if we can calculate pi, on our own.
-                    double cache =  -1 - T(idxc) * beta;
-                    for (int k = 0; k < m_idxnb.size(); k++)
-                        cache += m_kernel[m_idxnb[k]][idxc] * alpha(m_idxnb[k]);
-
-                    for (int k = 0; k < m_idxb.size(); k++)
-                        cache += m_kernel[m_idxb[k]][idxc] * alpha(m_idxb[k]);
-
-                    fcache(idxc) = -cache;
-                }
-                else
-                {
-                    fcache(idxc) = 0.0;
-                }
-
-
-                if (fcache(idxc) < -1e-3)
-                {
-
-
-                    //m_os << infolevel(5) << "\n\nReplacing the "
-                    //     << m_idxreplace[idx_replace_iter] 
-                    //     << "th entry of the working set.\n" 
-                    //     << "The new entry is " << idxc 
-                    //     << " with cache value " << fcache(idxc) 
-                    //     << ".\nWhere the old cache value was " 
-                    //     << fcache(m_workset[m_idxreplace[idx_replace_iter]]) 
-                    //     << "\nThe original idx is " << m_workset[m_idxreplace[idx_replace_iter]] << endl;
-                        
-
-                    m_workset[m_idxreplace[idx_replace_iter++]] = idxc;
- 
-                    if (idx_replace_iter == m_idxreplace.size())
-                        break;
-
-                }
-        
-            }
-
-            // Sort the indices
-            sort(m_workset.begin(), m_workset.end());
-            //END_PROF();
-
+            ming = fcache(m_workset[i]);
+            idxmin = m_workset[i];
         }
+    }
 
-        //m_os << infolevel(0) << "\n\nnew cache" << endl;
-        //for (int i = 0; i < m_workset.size(); i++)
-        //{
-        //    m_os << infolevel(0) 
-        //        << m_workset[i] 
-        //        << " " 
-        //        << fcache(m_workset[i]) << endl;
+    return idxmin;
 
-        //}
-
-        BEGIN_PROF("Find Min");
-        // Find the minimum in the workset.
-        idxn = 0;
-        ming = 1e300;
-        for (int i = 0; i < m_workset.size(); i++)
-        {
-            if (fcache(m_workset[i]) < ming)
-            {
-                ming = fcache(m_workset[i]);
-                idxn = m_workset[i];
-            }
-        }
-        END_PROF();
-
-        return idxn;
-    
 }
 
 
