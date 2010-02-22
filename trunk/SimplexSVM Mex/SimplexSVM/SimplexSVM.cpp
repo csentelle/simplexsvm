@@ -15,6 +15,7 @@ void SimplexSVM(ProxyStream& os,
                 double c,
                 double gamma,
                 int kernelType,
+				double tol, 
                 int verb,
                 int working_size,
                 int shrinking_iter,
@@ -35,23 +36,23 @@ void SimplexSVM(ProxyStream& os,
     {
         if (kernelType == 0)
         {
-            kernel = new LinearKernel(P, T, 4000);
+            kernel = new LinearKernel(P, T, 500);
         } 
         else if (kernelType == 1)
         {
-            kernel = new RBFKernel(P, T, gamma, 4000);
+            kernel = new RBFKernel(P, T, gamma, 500);
         }
         else if (kernelType == 2)
         {
-            kernel = new LinearKernelSparse(P, T, 4000);
+            kernel = new LinearKernelSparse(P, T, 500);
         }
         else if (kernelType == 3)
         {
-            kernel = new RBFKernelSparse(P, T, gamma, 4000);
+            kernel = new RBFKernelSparse(P, T, gamma, 500);
         
         }
     
-	    SVM svm_classifier(*kernel, c, os);
+	    SVM svm_classifier(*kernel, c, tol, os);
 
         svm_classifier.train(P, 
                              T, 
@@ -76,15 +77,14 @@ void EntryFunction(ProxyStream& os,
                    const GenArrayList& inputList, 
                    GenArrayList& outputList)
 {
-	if(inputList.getNumberOfArrays() < 7 || inputList.getNumberOfArrays() > 8)
+	if(inputList.getNumberOfArrays() < 8 || inputList.getNumberOfArrays() > 9)
 		throw exception("Invalid number of arguments");
 
     int verb = 0;
-    if (inputList.getNumberOfArrays() == 8)
+    if (inputList.getNumberOfArrays() == 9)
     {
-        verb = inputList[7].convertTo<double, 1>(8, "verb")(0);
-    }
-    
+        verb = inputList[8].convertTo<double, 1>(9, "verb")(0);
+    }  
 
     Array<double, 1> alpha;
     double t = 0.0;
@@ -97,9 +97,10 @@ void EntryFunction(ProxyStream& os,
             inputList[2].convertTo<double, 1>(3, "C")(0),
             inputList[3].convertTo<double, 1>(4, "g")(0),
             inputList[4].convertTo<int, 1>(5, "ktype")(0),
+			inputList[5].convertTo<double, 1>(6, "tol")(0),
             verb, 
-            inputList[5].convertTo<int, 1>(6, "working_size")(0),
-            inputList[6].convertTo<int, 1>(7, "shrink_iter")(0),
+            inputList[6].convertTo<int, 1>(7, "working_size")(0),
+            inputList[7].convertTo<int, 1>(8, "shrink_iter")(0),
             alpha,
             b,
             t,

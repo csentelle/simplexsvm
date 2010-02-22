@@ -12,7 +12,7 @@ class SVM
 {
 public:
 
-    SVM(Kernel& kernel, double C, ProxyStream& os);
+    SVM(Kernel& kernel, double C, double tol, ProxyStream& os);
     virtual ~SVM(void);
 
     void train(const Array<double, 2>& P, 
@@ -75,6 +75,7 @@ private:
     Kernel& m_kernel;
     ProxyStream& m_os;
     const double m_C;
+	const double m_tol;
 
     vector<int> m_idxnb;
     vector<int> m_idxb;
