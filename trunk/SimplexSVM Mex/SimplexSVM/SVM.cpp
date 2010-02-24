@@ -212,7 +212,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
               Array<double, 1>& upperfcache,
 			  int& iter)
 {
-    double eps = 1e-6;
+    double eps = 1e-15;
     bool bSlack = false;
     double gamma = 0.0;
     int N = T.size();
@@ -330,7 +330,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
 
 	m_os << infolevel(5) << "New Chol Factorization = " << endl << m_R << endl;
                 
-    while (abs(fcache(idx)) > eps)
+    while (abs(fcache(idx)) > m_tol)
     {
         // 
         // Search for the minimum theta. 
@@ -392,6 +392,8 @@ void SVM::takeStep(Array<double, 1>& alpha,
         m_os << infolevel(2) << "theta = " << theta << endl;
         m_os << infolevel(2) << "fcache(idx) / gamma = " << fcache(idx) / gamma << endl;
 
+		// Note that we cannot use the "tol", here, for this decision, but a much tighter
+		// eps, otherwise cycling can occur. 
 		if ( (gamma > -eps) || (theta < fcache(idx)/ gamma - eps))
         {
 
