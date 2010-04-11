@@ -126,6 +126,7 @@ void SVM::train(const Array<double, 2>& P,
                
         m_os << infolevel(1) << "iter = " << iter 
                              << " min_g = " << min_g 
+							 << " beta = " << beta
                              << " idx = " << idx << endl;
 
 
@@ -555,7 +556,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
         // Now we need to drive the corresponding Lagrange to zero to force
         // the complementary conditions
         //
-        if (abs(fcache(idx)) <= 1e-6) 
+        if (abs(fcache(idx)) <= m_tol) 
             break; 
         
         h.reference(m_hS(Range(0, (int)m_idxnb.size() - 1)));
