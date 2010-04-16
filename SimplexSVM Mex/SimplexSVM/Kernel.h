@@ -64,6 +64,8 @@ public:
         return m_cache;
     }
 
+	// Warning! The pointer returned by this method may become invalid
+	// after subsequent calls due to the kernel caching scheme.
     inline double* operator[](int i)
     {
         if (!m_cache[i])
