@@ -106,7 +106,6 @@ void SVM::train(const Array<double, 2>& P,
     m_R(0, 0) = sqrt(m_kernel.getQss(initS));
 
 
-    m_os << infolevel(7) << "fcache = " << fcache << endl;
 
 	//
     // Find the next index to enter the cache. Note that the 
@@ -121,13 +120,19 @@ void SVM::train(const Array<double, 2>& P,
     iter = 0;
     time_t ts = clock();
 	
-	while (min_g < -m_tol)
+	while (min_g < -m_tol )
+
     {
-               
+
+//		if (iter > 27240)
+//			m_os.setVerbosity(15);
+               		
         m_os << infolevel(1) << "iter = " << iter 
                              << " min_g = " << min_g 
 							 << " beta = " << beta
                              << " idx = " << idx << endl;
+
+		m_os << infolevel(7) << "fcache = " << fcache << endl;
 
 
         // Perform pivoting on the pivot element
@@ -328,8 +333,6 @@ void SVM::takeStep(Array<double, 1>& alpha,
     }
     
     bool bAddedIndex = false;
-
-	m_os << infolevel(5) << "New Chol Factorization = " << endl << m_R << endl;
                 
     while (abs(fcache(idx)) > m_tol)
     {
@@ -461,8 +464,8 @@ void SVM::takeStep(Array<double, 1>& alpha,
 				//
 				reduceCholFactor(T, idx_pos);
 
-				m_os << infolevel(5) << "Reduced Cholesky = " << endl;
-				m_os << infolevel(5) << m_R << endl;            
+				m_os << infolevel(20) << "Reduced Cholesky = " << endl;
+				m_os << infolevel(20) << m_R << endl;            
 
 				// Erase the value from the non-bound values
 				if (vIter != m_idxnb.end())
@@ -536,7 +539,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
             {
 
                 // Update the cholesky factorization
-                addToCholFactor(T, idx);
+                addToCholFactor(T, idx, iter);
 
 				//
                 // Go ahead and add to the non-bound support vector list. This has to be done after adding 
@@ -545,7 +548,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
                 m_idxnb.push_back(idx);
                 m_status(idx) = 1;
                     
-                m_os << infolevel(5) << "New Chol Factorization = " << endl << m_R << endl;
+                m_os << infolevel(20) << "New Chol Factorization = " << endl << m_R << endl;
             }
         
             bAddedIndex = true;
@@ -591,6 +594,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
             // Compute gamma
             gamma = -1;
             m_os << infolevel(4) << "h = " << h << endl;
+
         }
         else
         {   
@@ -641,8 +645,6 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
 
     if (m_workset.empty())
     {
-
-
         reinitializeCache(fcache, upperfcache, T, alpha, beta);
 
 		//
@@ -650,7 +652,6 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
 		// of items from the cache list where the number of remaining points
 		// is smaller than the working set size.
 		//
-        
 		if (m_fcache_indices.size() > nWorkingSize)
 		{
 			//
@@ -680,52 +681,47 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
         // Sort the indices
         sort(m_workset.begin(), m_workset.end());
 
-		
-
     }
     else
     {
+		for (int i = 0; i < m_workset.size(); i++)
+		{
+			int idx = m_workset[i];
 
-
-		// Create a temporary vector to hold some of the 
-		// kernel values for performance reasons.
-		vector<double*> vctr(m_idxnb.size());
-		for (int i = 0; i < m_idxnb.size(); i++)
-			vctr[i] = m_kernel[m_idxnb[i]];
-        
-
-        for (int i = 0; i < m_workset.size(); i++)
-        {
-            int idx = m_workset[i];
-
-            if (m_status(idx) == 0)
+			if (m_status(idx) == 0)
             {
-            
-                double cache = -1 - T(idx) * beta;
-                for (int k = 0; k < m_idxnb.size(); k++)
-					cache += vctr[k][idx] * alpha(m_idxnb[k]);
-                cache += upperfcache(idx);
-
-                fcache(idx) = cache;
-
+				fcache(idx) = -1 - T(idx) * beta + upperfcache(idx);
             }
             else if (m_status(idx) == 2)
             {
-
-                double cache =  -1 - T(idx) * beta;
-                for (int k = 0; k < m_idxnb.size(); k++)           
-                    cache += vctr[k][idx] * alpha(m_idxnb[k]);
-
-                cache += upperfcache(idx);
-
-                fcache(idx) = -cache;
+                fcache(idx) =  1 + T(idx) * beta - upperfcache(idx);
             }
             else
             {
-                fcache(idx) = 0.0;
+				fcache(idx) = 0.0;
             }
+		}
 
-        }
+		for (int k = 0; k < m_idxnb.size(); k++)
+		{
+			// Obtain a cache line from the Kernel object. This acts as a speed-up as 
+			// it prevents a function invokation and comparison each time within the for-loop. 
+			double* pKernelCacheLine = m_kernel[m_idxnb[k]];
+
+			for (int i = 0; i < m_workset.size(); i++)
+			{
+				int idx = m_workset[i];
+
+				if (m_status(idx) == 0)
+				{
+					fcache(idx) += pKernelCacheLine[idx] * alpha(m_idxnb[k]);
+				}
+				else if (m_status(idx) == 2)
+				{
+					fcache(idx) -= pKernelCacheLine[idx] * alpha(m_idxnb[k]);
+				}
+			}
+		}
     }
 
     // Find the minimum in the workset.
@@ -754,43 +750,43 @@ void SVM::reinitializeCache(Array<double, 1>& fcache,
 							const double beta)
 {
 
-	vector<double*> vctr(m_idxnb.size());
-	for (int i = 0; i < m_idxnb.size(); i++)
-		vctr[i] = m_kernel[m_idxnb[i]];
-
     for (int i = 0; i < m_fcache_indices.size(); i++)
-    {
+	{
         int idx = m_fcache_indices[i];
 
-        if (m_status(idx) == 1)
+		if (m_status(idx) == 0)
         {
-            fcache(idx) = 0.0;   
+			fcache(idx) = -1 - T(idx) * beta + upperfcache(idx);
         }
         else if (m_status(idx) == 2)
         {
-
-                // See if we can calculate pi, on our own.
-                double cache =  1 + T(idx) * beta;
-                for (int k = 0; k < m_idxnb.size(); k++)
-				    cache -= vctr[k][idx] * alpha(m_idxnb[k]);
-
-                cache -= upperfcache(idx);
-
-                fcache(idx) = cache;
-            
+            fcache(idx) =  1 + T(idx) * beta - upperfcache(idx);
         }
-        else if (m_status(idx) == 0)
+        else
         {
-            double cache = -1 - T(idx) * beta;
-            for (int k = 0; k < m_idxnb.size(); k++)
-				cache += vctr[k][idx] * alpha(m_idxnb[k]);
-
-            cache += upperfcache(idx);
-            
-            fcache(idx) = cache;
+			fcache(idx) = 0.0;
         }
-    }
+	}
 
+
+	for (int k = 0; k < m_idxnb.size(); k++)
+	{
+		double* pKernelCacheLine = m_kernel[m_idxnb[k]];
+
+		for (int i = 0; i < m_fcache_indices.size(); i++)
+		{
+			int idx = m_fcache_indices[i];
+
+			if (m_status(idx) == 0)
+			{
+				fcache(idx) += pKernelCacheLine[idx] * alpha(m_idxnb[k]);
+			}
+			else if (m_status(idx) == 2)
+			{
+				fcache(idx) -= pKernelCacheLine[idx] * alpha(m_idxnb[k]);
+			}
+		}
+	}
 }
 
 void SVM::solveSubProblem(const Array<double, 2>& R, 
@@ -1074,7 +1070,7 @@ void SVM::reduceCholFactor(const Array<double, 1>& T, const int idx)
 }
 
 
-void SVM::addToCholFactor(const Array<double, 1>& T, const int idx)
+void SVM::addToCholFactor(const Array<double, 1>& T, const int idx, const int iter)
 {
     
 	//  
@@ -1131,9 +1127,10 @@ void SVM::addToCholFactor(const Array<double, 1>& T, const int idx)
 			for (int i = 0; i < N - 1; i++)
 			{
 			   q(i) = -T(m_idxnb[0]) * T(m_idxnb[i+1]) * 
-						(m_kernel.getQss(m_idxnb[0]) * -T(m_idxnb[0]) * T(idx) + m_kernel[m_idxnb[0]][idx]) + 
-						m_kernel[m_idxnb[i+1]][m_idxnb[0]] * -T(m_idxnb[0]) * T(idx) + 
-						m_kernel[m_idxnb[i+1]][idx];
+						(m_kernel.getQss(m_idxnb[0]) * -T(m_idxnb[0]) * T(idx) + m_kernel(m_idxnb[0],idx)) + 
+						m_kernel(m_idxnb[i+1],m_idxnb[0]) * -T(m_idxnb[0]) * T(idx) + 
+						m_kernel(m_idxnb[i+1],idx);
+
 			}
 
 	       
@@ -1150,6 +1147,8 @@ void SVM::addToCholFactor(const Array<double, 1>& T, const int idx)
 				for (int j = 0; j <= i - 1; j++)
 					m_R(i, N - 1) -= m_R(j,i) * m_R(j, N - 1);
 				m_R(i, N - 1) /= m_R(i, i);
+
+
 			}
 
 			// Solve for rho
@@ -1157,8 +1156,11 @@ void SVM::addToCholFactor(const Array<double, 1>& T, const int idx)
 			for (int i = 0; i < N - 1; i++)
 				sigma += m_R(i, N - 1) * m_R(i, N - 1);
 
+
 			m_R(N - 1,N - 1) = sqrt(m_kernel.getQss(m_idxnb[0]) - 2 * T(m_idxnb[0]) * T(idx) * 
-									m_kernel[m_idxnb[0]][idx] + m_kernel.getQss(idx) - sigma);
+									m_kernel(m_idxnb[0],idx) + m_kernel.getQss(idx) - sigma);
+
+
 
 		}
 	}
