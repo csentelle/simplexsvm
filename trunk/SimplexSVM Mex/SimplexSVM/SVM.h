@@ -42,7 +42,7 @@ private:
 
 
     // Add a row/column to the factorization (L)
-    void addToCholFactor(const Array<double, 1>& T, const int idx);
+    void addToCholFactor(const Array<double, 1>& T, const int idx, const int iter);
     void reduceCholFactor(const Array<double, 1>& T, const int idx);
 
     void solveSubProblem(const Array<double, 2>& R, 
