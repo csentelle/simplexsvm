@@ -30,29 +30,31 @@ void SimplexSVM(ProxyStream& os,
     alpha.resize(T.shape());
     alpha(Range::all()) = 0.0;
 
-    Kernel* kernel = NULL;
+    KernelCache* kernelCache = NULL;
+	Kernel* kernel = NULL;
 
     try
     {
         if (kernelType == 0)
         {
-            kernel = new LinearKernel(P, T, 500);
+			kernel = new LinearKernel();
+            kernelCache = new KernelCache(*kernel, P, T, 500);
         } 
         else if (kernelType == 1)
-        {
-            kernel = new RBFKernel(P, T, gamma, 500);
+        {	
+			kernel = new RBFKernel(gamma);
+            kernelCache = new KernelCache(*kernel, P, T, 500);
         }
         else if (kernelType == 2)
         {
-            kernel = new LinearKernelSparse(P, T, 500);
+            throw new string("Sparse kernel unimplemented");
         }
         else if (kernelType == 3)
         {
-            kernel = new RBFKernelSparse(P, T, gamma, 500);
-        
+            throw new string("Sparse kernel unimplemented");        
         }
     
-	    SVM svm_classifier(*kernel, c, tol, os);
+	    SVM svm_classifier(*kernelCache, c, tol, os);
 
         svm_classifier.train(P, 
                              T, 
@@ -63,7 +65,9 @@ void SimplexSVM(ProxyStream& os,
                              working_size, 
                              shrinking_iter);
 
-        delete kernel;
+        delete kernelCache;
+		delete kernel;
+
     }
     catch(...)
     {
@@ -83,7 +87,7 @@ void EntryFunction(ProxyStream& os,
     int verb = 0;
     if (inputList.getNumberOfArrays() == 9)
     {
-        verb = inputList[8].convertTo<double, 1>(9, "verb")(0);
+        verb = (int)inputList[8].convertTo<double, 1>(9, "verb")(0);
     }  
 
     Array<double, 1> alpha;

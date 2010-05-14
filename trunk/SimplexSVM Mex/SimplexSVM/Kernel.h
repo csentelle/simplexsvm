@@ -3,514 +3,378 @@
 // For Blitz Array class.
 #include <blitz/array.h>         
 BZ_USING_NAMESPACE(blitz) 
+#include <list>
+#include <vector>
+using namespace std;
+
+template<class T>
+inline void INSERT_ELEMENTS(T& coll, int first, int last)
+{
+	for (int i = first; i <= last; ++i)
+		coll.insert(coll.end(),i);
+};
+
+template<class T>
+void swapdata(T& a, T& b)
+{
+	T tmp = a;
+	a = b;
+	b = tmp;
+};
 
 struct SparseNode
 {
-    SparseNode(double value, int index) 
-        : m_value(value), m_index(index) {}
+	SparseNode(double value, int index) 
+		: m_value(value), m_index(index) {}
 
-    double m_value;
-    int m_index;
+	double m_value;
+	int m_index;
 };
 
-#include <vector>
-using namespace std;
+// CacheLine
+// This structure stores information regarding a cache line. A cacheline is a column 
+// of the kernel matrix. The length of the cache line is dependent upon the current
+// active size, variables that have not been removed through the shrinking process.
+//
+struct CacheLine
+{
+	// Default constructor
+	CacheLine() 
+		: m_buffer(NULL), m_len(0), m_index(0) {};
+
+	CacheLine(double* buffer, size_t len, size_t index) 
+		: m_buffer(buffer), m_len(len), m_index(index) {};
+
+	double* m_buffer;
+	size_t m_len;	
+	size_t m_index;
+};
+
+
 class Kernel
 {
-public:
+public: 
+	Kernel() {}
+	virtual ~Kernel() {}
 
-	Kernel(const Array<double, 2>& P, 
-           const Array<double, 1>& T,
-           int cacheSize = 100) 
-    : m_P(P)
-    , m_T(T)
-    {
-
-        m_cachess = new double[T.size()];
-        m_cache = new double*[T.size()];
-
-        for (int i = 0; i < T.size(); i++)
-            m_cache[i] = NULL;
-            
-		// Determine number of available cache lines based upon 
-		// available memory size (in MBytes)
-        m_cacheLineSize = cacheSize * 1024 * 1024 / (m_T.size() * sizeof(double)); 
-
-        m_cacheLines = new double[m_T.size() * m_cacheLineSize];
-        m_cacheLineIdx = 0;
-        m_cacheOwners.resize(m_cacheLineSize);
-
-        m_nCacheCount = 0;
-
-    };
-
-
-    virtual ~Kernel(void) 
-    {
-
-        delete [] m_cacheLines;
-        delete [] m_cachess;
-        delete [] m_cache;
-
-    };
-
-	virtual double operator()(int i, int j) = 0;
-    virtual void cacheColumn(int i) = 0;
-
-    virtual double compute(int i, int j) const = 0;
-    
-    double** get_cache()
-    {
-        return m_cache;
-    }
-
-	// Warning! The pointer returned by this method may become invalid
-	// after subsequent calls due to the kernel caching scheme.
-    inline double* operator[](int i)
-    {
-        if (!m_cache[i])
-        {
-            cacheColumn(i);
-        }
-
-        return m_cache[i];
-    }
-
-    inline double getQss(int i)
-    {
-        return m_cachess[i];
-    }
-
-    int m_nCacheCount;
-
-protected:
-
-    double* obtainCacheLine(int i)
-    {
-        if (m_cacheLineIdx >= m_cacheLineSize)
-        {
-            // Generate a random number and replace someone
-            int repIdx = ++m_cacheLineIdx % m_cacheLineSize;
-            
-            m_cache[m_cacheOwners[repIdx]] = NULL;
-            m_cacheOwners[repIdx] = i;
-            
-            return &m_cacheLines[repIdx * m_T.size()];
-           
-        }
-        else
-        {
-            m_cacheOwners[m_cacheLineIdx] = i;
-            return &m_cacheLines[m_cacheLineIdx++ * m_T.size()];
-   
-        }   
-    }
-
-    void storeSparseRepresentation(const Array<double, 2>& P)
-    {
-        m_sparseP.resize(P.extent(1));
-        
-        for (int i = 0; i < m_sparseP.size(); i++)
-        {
-            for (int k = 0; k < P.extent(0); k++)
-            {
-				const double val = P(k, i);
-                if (abs(val) > 1e-6 )
-                {
-                    m_sparseP[i].push_back(SparseNode(val, k));
-                }
-            }
-            m_sparseP[i].push_back(SparseNode(0.0, -1));
-        }
-    }
-
-    // Stores the data in sparse format.
-    vector<vector<SparseNode> > m_sparseP;
-    vector<int> m_cacheOwners;
-
-    const Array<double, 2>& m_P;
-    const Array<double, 1>& m_T;
-
-    double** m_cache;
-    double* m_cachess;
-    double* m_cacheLines;
-    int m_cacheLineIdx;
-    int m_cacheLineSize;
+	virtual double compute(const Array<double, 2>& P, const Array<double,1>& T, 
+		const size_t i, const size_t j) const = 0;
 };
-
-class RBFKernelSparse : public Kernel
-{
-public:
-
-    RBFKernelSparse(const Array<double, 2>& P, 
-              const Array<double, 1>& T, 
-              double fpGamma,
-              int cacheSize) 
-		: Kernel(P, T, cacheSize)
-        , m_fpGamma(fpGamma) 
-    {
-        for (int i = 0; i < T.size(); i++)
-            m_cachess[i] = compute(i, i); 
-
-        Kernel::storeSparseRepresentation(P);
-
-    };
-
-	virtual ~RBFKernelSparse(void) {};
-
-
-    virtual void cacheColumn(int i) 
-    {
-        Kernel::m_nCacheCount++;
-
-        if (NULL == m_cache[i])
-        {
-            double sum = 0.0;
-            int N = m_P.extent(0);
-
-            m_cache[i] = obtainCacheLine(i);
-
-            for (int j = 0; j < m_T.size(); j++)
-            {                
-                sum = 0.0;
-
-                int idxi = 0;
-                int idxj = 0;
-
-                while (m_sparseP[i][idxi].m_index != -1 && m_sparseP[j][idxj].m_index != -1)
-                {
-                    if (m_sparseP[i][idxi].m_index == m_sparseP[j][idxj].m_index)
-                    { 
-                        double diff =
-                            m_sparseP[i][idxi].m_value - m_sparseP[j][idxj].m_value;
-                        
-                        sum += diff * diff;
-                        
-                        idxi++;
-                        idxj++;
-                    }
-                    else if (m_sparseP[i][idxi].m_index > m_sparseP[j][idxj].m_index)
-                    {
-                        sum += 
-                            m_sparseP[j][idxj].m_value * m_sparseP[j][idxj].m_value;
-                        
-                        idxj++;
-                    }
-                    else if (m_sparseP[j][idxj].m_index > m_sparseP[i][idxi].m_index)
-                    {
-                        sum += m_sparseP[i][idxi].m_value * m_sparseP[i][idxi].m_value;
-                        idxi++;
-                    }
-                }
-
-                while (m_sparseP[j][idxj].m_index != -1)
-                {
-                        sum += m_sparseP[j][idxj].m_value * m_sparseP[j][idxj].m_value;
-                        idxj++;
-                }
-
-                while (m_sparseP[i][idxi].m_index != -1)
-                {
-                        sum += m_sparseP[i][idxi].m_value * m_sparseP[i][idxi].m_value;
-                        idxi++;
-                }
-
-                for (int k = 0; k < N; k++)
-                {
-                    double diff = 0.0;
-					diff = m_P(k, i) - m_P(k, j);
-                    sum += diff * diff;
-                }
-                
-                m_cache[i][j] = exp(-m_fpGamma * sum) * m_T(i) * m_T(j);
-
-            }
-        }
-    }
-
-    double compute(int i, int j) const
-    {
-        double sum = 0.0;
-        for (int k = 0; k < m_P.extent(0); k++)
-        {
-            double diff = m_P(k, i) - m_P(k, j);
-            sum += diff * diff;
-        }
-
-		return exp(-m_fpGamma * sum) * m_T(i) * m_T(j);
-    }
-
-	virtual double operator()(int i, int j) 
-	{
-        if (m_cache[i])
-        {
-            return m_cache[i][j];
-        }
-        else if (m_cache[j])
-        {
-            return m_cache[j][i];
-        }
-        else
-        {
-            cacheColumn(i);
-            return m_cache[i][j];
-        }
-	}
-	
-private:
-
-	const double m_fpGamma;
-
-
-};
-
-class RBFKernel : public Kernel
-{
-public:
-
-    RBFKernel(const Array<double, 2>& P, 
-              const Array<double, 1>& T, 
-              double fpGamma,
-              int cacheSize) 
-		: Kernel(P, T, cacheSize)
-        , m_fpGamma(fpGamma) 
-    {
-        for (int i = 0; i < T.size(); i++)
-            m_cachess[i] = compute(i, i); 
-    };
-
-	virtual ~RBFKernel(void) {};
-
-    virtual void cacheColumn(int i) 
-    {
-        Kernel::m_nCacheCount++;
-
-        if (NULL == m_cache[i])
-        {
-
-			double sum = 0.0;
-            int N = m_P.extent(0);
-
-			const double *points1 = &m_P.data()[ i * N ];
-			const double *points2buf = m_P.data();
-			
-            m_cache[i] = obtainCacheLine(i);
-
-            for (int j = 0; j < m_T.size(); j++)
-            {                
-                sum = 0.0;
-				double diff = 0.0;
-				const double* points2 = &points2buf[j * N];
-
-                for (int k = 0; k < N; k++)
-                {
-                    diff = points1[k] - points2[k];
-					sum += diff * diff;
-                }
-                
-                m_cache[i][j] = exp(-m_fpGamma * sum) * m_T(i) * m_T(j);
-
-            }
-        }
-    }
-
-    double compute(int i, int j) const
-    {
-        double sum = 0.0;
-        for (int k = 0; k < m_P.extent(0); k++)
-        {
-            double diff = m_P(k, i) - m_P(k, j);
-            sum += diff * diff;
-        }
-
-		return exp(-m_fpGamma * sum) * m_T(i) * m_T(j);
-    }
-
-	virtual double operator()(int i, int j) 
-	{
-        if (m_cache[i])
-        {
-            return m_cache[i][j];
-        }
-        else if (m_cache[j])
-        {
-            return m_cache[j][i];
-        }
-        else
-        {
-            cacheColumn(i);
-            return m_cache[i][j];
-        }
-	}
-	
-private:
-
-	const double m_fpGamma;
-
-
-};
-
-class LinearKernelSparse : public Kernel
-{
-public:
-	LinearKernelSparse(const Array<double,2>& P, const Array<double, 1>& T, int cacheSize)
-        : Kernel(P, T, cacheSize)
-    {
-        for (int i = 0; i < T.size(); i++)
-            m_cachess[i] = compute(i, i);
-
-        Kernel::storeSparseRepresentation(P);
-    };
-
-	virtual ~LinearKernelSparse() 
-    {
-
-    };
-
-    virtual void cacheColumn(int i) 
-    {
-        if (NULL == m_cache[i])
-        {
-            double sum = 0.0;
-            int N = m_P.extent(0);
-
-            m_cache[i] = obtainCacheLine(i);
-
-            for (int j = 0; j < m_T.size(); j++)
-            {                
-                sum = 0.0;
-
-                int idxj = 0;
-                int idxi = 0;
-
-                while (m_sparseP[i][idxi].m_index != -1 && m_sparseP[j][idxj].m_index != -1)
-                {
-                    if (m_sparseP[i][idxi].m_index == m_sparseP[j][idxj].m_index)
-                    {
-                        sum += 
-                            m_sparseP[i][idxi].m_value * m_sparseP[j][idxj].m_value;
-                        
-                        idxj++;
-                        idxi++;
-                    }
-                    else if (m_sparseP[i][idxi].m_index > m_sparseP[j][idxj].m_index)
-                    {
-                        idxj++;
-                    }
-                    else if (m_sparseP[j][idxj].m_index > m_sparseP[i][idxi].m_index)
-                    {
-                        idxi++;
-                    }
-                }
-
-                m_cache[i][j] = sum * m_T(i) * m_T(j);
-
-            }
-        }
-    };
-
-    inline double compute(int i, int j) const
-    {
-        double sum = 0.0;
-        for (int k = 0; k < m_P.extent(0); k++)
-            sum += m_P(k, i) * m_P(k, j);
-
-        return sum * m_T(i) * m_T(j);
-    }
-
-	virtual double operator()(int i, int j) 
-	{
-        if (m_cache[i])
-        {
-            return m_cache[i][j];
-        }
-        else if (m_cache[j])
-        {
-            return m_cache[j][i];
-        }
-        else
-        {
-            cacheColumn(i);
-            return m_cache[i][j];
-        }
-	}
-
-private:
-
-
-};
-
 
 class LinearKernel : public Kernel
 {
 public:
-	LinearKernel(const Array<double,2>& P, const Array<double, 1>& T, int cacheSize)
-        : Kernel(P, T, cacheSize)
-    {
-        for (int i = 0; i < T.size(); i++)
-            m_cachess[i] = compute(i, i);
 
-    };
+	LinearKernel() : Kernel() {};
+	virtual ~LinearKernel(void) {};
 
-	virtual ~LinearKernel() 
-    {
-
-    };
-
-
-
-    virtual void cacheColumn(int i) 
-    {
-        if (NULL == m_cache[i])
-        {
-            double sum = 0.0;
-            int N = m_P.extent(0);
-
-            m_cache[i] = obtainCacheLine(i);
-
-            for (int j = 0; j < m_T.size(); j++)
-            {                
-                sum = 0.0;
-				
-				const double *points1 = &m_P.data()[ i * N ];
-				const double *points2 = &m_P.data()[ j * N ];
-
-				for (int k = 0; k < N; k++)
-					sum += points1[k] * points2[k];
-                
-                m_cache[i][j] = sum * m_T(i) * m_T(j);
-
-            }
-        }
-    };
-
-    inline double compute(int i, int j) const
-    {
-        double sum = 0.0;
-        for (int k = 0; k < m_P.extent(0); k++)
-            sum += m_P(k, i) * m_P(k, j);
-
-        return sum * m_T(i) * m_T(j);
-    }
-
-	virtual double operator()(int i, int j) 
+	double compute(const Array<double, 2>& P, const Array<double,1>& T, 
+		const size_t i, const size_t j) const
 	{
-        if (m_cache[i])
-        {
-            return m_cache[i][j];
-        }
-        else if (m_cache[j])
-        {
-            return m_cache[j][i];
-        }
-        else
-        {
-            cacheColumn(i);
-            return m_cache[i][j];
-        }
+		size_t N = T.size();
+		double sum = 0.0;
+
+		const double *points1 = &P.data()[ i * N ];
+		const double *points2 = &P.data()[ j * N ];
+
+		for (size_t k = 0; k < N; k++)
+			sum += points1[k] * points2[k];
+
+		// Note weakness of Blitz++ arrays, which should be using size_t instead of int.
+		return sum * T((int)i) * T((int)j);
+	}
+};
+
+
+class RBFKernel: public Kernel
+{
+public:
+
+	RBFKernel(double fpGamma): Kernel(), m_fpGamma(fpGamma) {};
+	virtual ~RBFKernel(void) {};
+
+	double compute(const Array<double, 2>& P, const Array<double, 1>& T, 
+		const size_t i, const size_t j) const
+	{
+		size_t N = T.size();	
+		double sum = 0.0;
+		double diff = 0.0;
+
+		const double* points1 = &P.data()[ i * N ];
+		const double* points2 = &P.data()[ j * N ];
+
+		for (size_t k = 0; k < N; k++)
+		{
+			diff = points1[k] - points2[k];
+			sum += diff * diff;
+		}
+
+		return exp(-m_fpGamma * sum) * T((int)i) * T((int)j);
 	}
 
 private:
 
+	const double m_fpGamma;
 
 };
+
+
+class KernelCache
+{
+public:
+
+	KernelCache(const Kernel& kernel, 
+		const Array<double, 2>& P, 
+		const Array<double, 1>& T,
+		unsigned int cacheSize = 100) 
+		: m_kernel(kernel)
+		, m_P(P)
+		, m_T(T)
+		, m_cacheSize(cacheSize * 1024 * 1024)
+		, m_currentAllocSize(0)
+		, m_colIndices(T.size())
+		, m_rowIndices(T.size())
+		, m_activeLength(T.size())
+	{
+
+		for (int i = 0; i < T.size(); i++)
+		{
+			m_cacheDiagonal[i] = kernel.compute(m_P, m_T, i, i);
+		}
+
+		// Initialize the active list and all of the row indices
+		INSERT_ELEMENTS(m_activeIndices, 0, m_T.size() - 1);
+		INSERT_ELEMENTS(m_rowIndices, 0, m_T.size() - 1);
+
+		// Add a NULL reference. The item at the end of the list will contain a pointer to
+		// an empty buffer. This is used as a NULL reference since iterators cannot be
+		// specified as NULL.
+		m_cache.push_back(CacheLine());
+		NULLITEM = m_cache.begin();
+
+	}
+
+
+	virtual ~KernelCache(void) 
+	{
+		// Clear memory allocated by cache. Remaining objects should be cleaned up
+		// by default destructors
+		clearCache();
+	}
+
+	double operator()(size_t i, size_t j) 
+	{
+		assert(i < m_colIndices.size() && j < m_activeLength);
+		return getColumn(i)[m_rowIndices[j]];
+	}
+
+	void getColumn(size_t idx, double* buffer, size_t& len)
+	{
+		double* colBuffer = getColumn(idx);
+
+		len = min(len, (*m_colIndices[idx]).m_len);
+		memcpy(buffer, colBuffer, len * sizeof(double));
+	}
+
+	const vector<size_t>& getActiveIndices() const
+	{
+		return m_activeIndices;
+	}
+
+	double getQss(size_t i)
+	{
+		return m_cacheDiagonal[i];
+	}
+
+	void resetActiveToFull()
+	{
+		// Reset the active indices length, which should subsequently signal
+		// a need to recompute each of the cache lines as they are accessed
+		m_activeLength = m_activeIndices.size();
+	}
+
+	void removeActiveIndex(size_t i)
+	{
+		// Swap this item out with the last element in the list.
+		size_t idx = m_rowIndices[i];
+
+		// Proceed through the items in each cache line and swap the computed value to be 
+		// removed with the last in the active list
+		for (list<CacheLine>::iterator pos = m_cache.begin(); pos != m_cache.end(); pos++)
+		{
+			swapdata((*pos).m_buffer[idx], (*pos).m_buffer[m_activeLength-1]);
+			(*pos).m_len--;
+		}
+
+		// Swap entries in the active indices to place the removed variable at
+		// the end of the current active list.
+		swapdata(m_activeIndices[m_activeLength-1], m_activeIndices[idx]);
+
+		// Swap the pointers to active indices in the indices structure
+		swapdata(m_rowIndices[i], m_rowIndices[m_activeLength-1]);
+
+		// Reduce the length of the active indices
+		m_activeLength--;
+	}
+
+protected:
+
+	double* getColumn(size_t i)
+	{
+		if ((*m_colIndices[i]).m_buffer != NULL)
+		{
+			refreshColumn(i);
+		}
+		else
+		{
+			cacheColumn(i);
+		}
+
+		return (*m_colIndices[i]).m_buffer;
+	}
+
+	// Proceed through the cache and clean up all cache lines
+	void clearCache()
+	{
+		for (list<CacheLine>::iterator pos = m_cache.begin(); pos != m_cache.end(); ++pos)
+		{
+			delete [] (*pos).m_buffer;
+			(*pos).m_len = 0;
+			m_colIndices[(*pos).m_index] = NULLITEM;
+		}		
+	}
+
+
+	void refreshColumn(size_t i)
+	{
+
+		if (m_colIndices[i] != NULLITEM)
+		{
+			// Move the item to the front of the list
+			CacheLine cacheline = *m_colIndices[i];
+			m_cache.erase(m_colIndices[i]);
+			m_cache.push_front(cacheline);
+
+			// Determine if the size is correct.
+			if (cacheline.m_len < m_activeLength)
+			{
+				// Allocate a larger buffer
+				reallocColumn(cacheline);
+
+				// Really only need to compute a partial column for speed
+				computeColumn(cacheline.m_buffer, i);
+			}
+		}		 		
+	}
+
+	void reallocColumn(CacheLine& cacheline)
+	{
+		if ((m_activeLength - cacheline.m_len) * sizeof(double) + m_currentAllocSize < m_cacheSize)
+		{
+			m_currentAllocSize -= cacheline.m_len * sizeof(double);
+
+			// We need to resize the column
+			cacheline.m_buffer = (double*)realloc(cacheline.m_buffer, m_activeLength * sizeof(double));
+			cacheline.m_len = m_activeLength;
+
+			m_currentAllocSize += m_activeLength * sizeof(double);				
+		}
+		else
+		{
+			throw "out of memory, increase cache size";
+		}
+	}
+
+	void computeColumn(double* column, size_t i)
+	{		
+		// Compute the column
+		for (size_t j = 0; j < m_activeIndices.size(); j++)
+			column[j] = compute( i, m_activeIndices[j]);
+	}
+
+	// Cache a column of the kernel matrix. Only the portion corresponding
+	// to the active indices is cached.
+	void cacheColumn(size_t i) 
+	{
+		if (NULLITEM == m_colIndices[i])
+		{
+			size_t len = m_activeLength * sizeof(double);
+
+			// If there is sufficient cache left over
+			if (len + m_currentAllocSize < m_cacheSize)
+			{
+				// Just allocate a buffer.
+				m_cache.push_front(CacheLine((double*)malloc(len), 
+					m_activeLength, i));
+
+				m_colIndices[i] = m_cache.begin();
+
+				m_currentAllocSize += len;
+
+				computeColumn((*m_colIndices[i]).m_buffer, i);
+
+			}
+			else
+			{
+				// Delete the LRU and realloc for the purposes of this item. Note
+				// that the very last item is 
+				list<CacheLine>::iterator pos = m_cache.end()-- --;
+
+				m_colIndices[(*pos).m_index] = NULLITEM;
+				(*pos).m_index = i;
+				m_colIndices[i] = pos;
+
+				// This will force a reallocation and recompute on the column
+				refreshColumn(i);
+			}
+
+
+		}
+		else
+		{
+			throw "cached in invalid column";
+		}
+
+	}
+
+	// Compute the kernel function
+	double compute(size_t i, size_t j) const
+	{
+		return m_kernel.compute(m_P, m_T, i, j);
+	}
+
+	// Kernel function
+	const Kernel& m_kernel;
+
+	// Contains mapping of external indices to caching structure and active indices
+	vector<list<CacheLine>::iterator> m_colIndices;
+	vector<size_t> m_rowIndices;
+
+	// Contains list of active indices
+	vector<size_t> m_activeIndices;
+	size_t m_activeLength;
+
+	// List structure implements LRU caching mechanism
+	list<CacheLine> m_cache;
+	list<CacheLine>::iterator NULLITEM;
+
+	// Referenced data used for computing Hessian
+	const Array<double, 2>& m_P;
+	const Array<double, 1>& m_T;
+
+	// Pre-caching of diagonal elements
+	vector<double> m_cacheDiagonal;
+
+	// Maximum caching size
+	size_t m_cacheSize;
+
+	// Currently allocated cache size
+	size_t m_currentAllocSize;
+
+};
+
+
+
+
+
+
