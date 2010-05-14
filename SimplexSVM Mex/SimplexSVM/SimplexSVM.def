@@ -1,4 +1,4 @@
-LIBRARY	SimplexSVM
+LIBRARY	SimplexSVM.mexw64
 
 EXPORTS  
 	mexFunction

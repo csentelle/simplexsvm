@@ -2,7 +2,11 @@
 
 #include "Kernel.h"
 #include "ProxyStream.h"	
-#include <blitz/array.h>         
+
+
+#include <blitz/array.h>         // include Blitz header file
+
+
 BZ_USING_NAMESPACE(blitz) 
 
 #include <vector>
@@ -12,7 +16,7 @@ class SVM
 {
 public:
 
-    SVM(Kernel& kernel, double C, double tol, ProxyStream& os);
+    SVM(KernelCache& kernel, double C, double tol, ProxyStream& os);
     virtual ~SVM(void);
 
     void train(const Array<double, 2>& P, 
@@ -72,7 +76,7 @@ private:
 	inline Array<double, 1>& fwrdSolve(const Array<double, 2>& R, Array<double, 1>& x);
 	inline Array<double, 1>& bkwrdSolve(const Array<double, 2>& R, Array<double, 1>& x);
 
-    Kernel& m_kernel;
+    KernelCache& m_kernel;
     ProxyStream& m_os;
     const double m_C;
 	const double m_tol;
@@ -100,6 +104,9 @@ private:
     Array<double, 1> m_hS;
     Array<double, 1> m_etS;
     Array<double, 1> m_qS;
+
+	// Temporary buffer for computing the error caches
+	double* m_kernelCacheBuffer;
 
 	//
 	// The m_RStorage array is not preallocated to the maximum size since

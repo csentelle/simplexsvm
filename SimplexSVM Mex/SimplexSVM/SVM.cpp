@@ -1,15 +1,21 @@
+
+#pragma warning (push)
+#pragma warning( disable : 4805)
+#pragma warning( disable : 4800)
+
+
 #include ".\svm.h"
 #include <algorithm>
-#include "time.h"
 #include <functional>
+#include "time.h"
 #include "stdlib.h"
 
 #undef PROFILE
 //#define PROFILE	&Profile
 
-#include "hwprof.h"
+//#include "hwprof.h"
 
-CHWProfile Profile; 
+//CHWProfile Profile; 
 
 
 template <class T>
@@ -20,14 +26,14 @@ struct IndexCompare
     
     bool operator()(const size_t idx1, const size_t idx2)
     {
-        return m_arr(idx1) < m_arr(idx2);
+        return m_arr((int)idx1) < m_arr((int)idx2);
     }
 
     const T& m_arr;
 };
 
 
-SVM::SVM(Kernel& kernel, double C, double tol, ProxyStream& os)
+SVM::SVM(KernelCache& kernel, double C, double tol, ProxyStream& os)
 : m_kernel(kernel)
 , m_C(C)
 , m_tol(tol)
@@ -57,6 +63,10 @@ void SVM::train(const Array<double, 2>& P,
     Array<double, 1> upperfcache(T.size());
 
 	double beta = 0.0;
+
+	m_kernelCacheBuffer = (double*) malloc(T.size() * sizeof(double));
+	if (!m_kernelCacheBuffer)
+		throw "Error allocating kernel cache buffer";
 
     //
     // Allocate temporary arrays, these will be used in some functions
@@ -115,7 +125,7 @@ void SVM::train(const Array<double, 2>& P,
     int idx = minIndex(fcache)(0);
     double min_g = min(fcache);
 
-	Profile.reset();
+	//Profile.reset();
 
     iter = 0;
     time_t ts = clock();
@@ -138,7 +148,6 @@ void SVM::train(const Array<double, 2>& P,
         // Perform pivoting on the pivot element
         takeStep(alpha, idx, fcache, T, beta, upperfcache, iter);
 
-
 		idx = updateCacheStrategy(working_size, T, alpha, beta, fcache, upperfcache, min_g);
         
 		// 	If we appear to have hit the stopping criterion, then, proceed with
@@ -160,18 +169,26 @@ void SVM::train(const Array<double, 2>& P,
 
             if (min_g > -m_tol)
             {
+				// Reinitialize the active set. Note that we need to rename
+				// m_fcache_indices to activeIndices since this is what it really
+				// is.
                 m_fcache_indices.erase(m_fcache_indices.begin(),
                                        m_fcache_indices.end());
-
+				
                 for (int i = 0; i < fcache.size(); i++)
                     m_fcache_indices.push_back(i);
 
-                m_workset.erase(m_workset.begin(), m_workset.end());
+				// Erase the working set, which will force a new working set computation
+				// on the entire data set.
+				m_workset.erase(m_workset.begin(), m_workset.end());
                 
+				// Reset the kernel caching. This will force recomputation of entire columns
+				m_kernel.resetActiveToFull();
+
                 idx = updateCacheStrategy(working_size, 
-                                        T, 
-                                        alpha, 
-                                        beta, fcache, upperfcache, min_g);
+                                          T, 
+                                          alpha, 
+                                          beta, fcache, upperfcache, min_g);
 
             }
         }
@@ -180,6 +197,7 @@ void SVM::train(const Array<double, 2>& P,
         else if (iter % shrinking_iter == 0)
         {
 
+			// Make sure all entries have been updated, not just the working set
             reinitializeCache(fcache, upperfcache, T, alpha, beta);
 
             for (int i = 0; i < m_fcache_indices.size(); i++)
@@ -187,6 +205,8 @@ void SVM::train(const Array<double, 2>& P,
 
                 if (fcache(m_fcache_indices[i]) > -m_tol)
                 {
+					m_kernel.removeActiveIndex(m_fcache_indices[i]);
+
                     m_fcache_indices.erase(remove(m_fcache_indices.begin(),
                                                   m_fcache_indices.end(),
                                                   m_fcache_indices[i]),
@@ -206,8 +226,8 @@ void SVM::train(const Array<double, 2>& P,
     b = beta;
 
 	//////END_PROF();
-	Profile.dumpprint(m_os, 0);
-	Profile.reset();
+	//Profile.dumpprint(m_os, 0);
+	//Profile.reset();
 }
 
 void SVM::takeStep(Array<double, 1>& alpha, 
@@ -706,7 +726,7 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
 		{
 			// Obtain a cache line from the Kernel object. This acts as a speed-up as 
 			// it prevents a function invokation and comparison each time within the for-loop. 
-			double* pKernelCacheLine = m_kernel[m_idxnb[k]];
+			//double* pKernelCacheLine = m_kernel[m_idxnb[k]];
 
 			for (int i = 0; i < m_workset.size(); i++)
 			{
@@ -714,11 +734,11 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
 
 				if (m_status(idx) == 0)
 				{
-					fcache(idx) += pKernelCacheLine[idx] * alpha(m_idxnb[k]);
+					fcache(idx) += m_kernel(m_idxnb[k],idx) * alpha(m_idxnb[k]);
 				}
 				else if (m_status(idx) == 2)
 				{
-					fcache(idx) -= pKernelCacheLine[idx] * alpha(m_idxnb[k]);
+					fcache(idx) -= m_kernel(m_idxnb[k],idx) * alpha(m_idxnb[k]);
 				}
 			}
 		}
@@ -749,6 +769,9 @@ void SVM::reinitializeCache(Array<double, 1>& fcache,
 							const Array<double, 1>& alpha,
 							const double beta)
 {
+    // Assume we are only going to update the cache for active indices. 
+	// We will rely on the kernel cache which might have a different 
+	// ordering for the active indices.
 
     for (int i = 0; i < m_fcache_indices.size(); i++)
 	{
@@ -768,22 +791,26 @@ void SVM::reinitializeCache(Array<double, 1>& fcache,
         }
 	}
 
+	const vector<size_t> activeIndices = m_kernel.getActiveIndices();
 
-	for (int k = 0; k < m_idxnb.size(); k++)
+	for (size_t k = 0; k < m_idxnb.size(); k++)
 	{
-		double* pKernelCacheLine = m_kernel[m_idxnb[k]];
+		size_t nSize = activeIndices.size();
+		
+		// Obtain a copy of the kernel cache for the relevant index
+		m_kernel.getColumn(m_idxnb[k], 	m_kernelCacheBuffer, nSize);
 
-		for (int i = 0; i < m_fcache_indices.size(); i++)
+		for (size_t i = 0; i < activeIndices.size(); i++)
 		{
-			int idx = m_fcache_indices[i];
+			size_t idx = activeIndices[i];
 
-			if (m_status(idx) == 0)
+			if (m_status((int)idx) == 0)
 			{
-				fcache(idx) += pKernelCacheLine[idx] * alpha(m_idxnb[k]);
+				fcache((int)idx) += m_kernelCacheBuffer[idx] * alpha(m_idxnb[k]);
 			}
-			else if (m_status(idx) == 2)
+			else if (m_status((int)idx) == 2)
 			{
-				fcache(idx) -= pKernelCacheLine[idx] * alpha(m_idxnb[k]);
+				fcache((int)idx) -= m_kernelCacheBuffer[idx] * alpha(m_idxnb[k]);
 			}
 		}
 	}
@@ -837,7 +864,7 @@ void SVM::solveSubProblem(const Array<double, 2>& R,
 		{
 			assert(i >= 0 && i < N - 1);
             hz(i) = T(m_idxnb[0]) * T(m_idxnb[i + 1]) * (m_kernel.getQss(m_idxnb[0]) * hy - qs(0)) +
-				     qs(i + 1) - m_kernel[m_idxnb[i + 1]][m_idxnb[0]] * hy;
+				     qs(i + 1) - m_kernel(m_idxnb[i + 1],m_idxnb[0]) * hy;
 		}
 
         // Perform backward, forward solve to obtain hz.
@@ -858,7 +885,7 @@ void SVM::solveSubProblem(const Array<double, 2>& R,
 		g = -T(m_idxnb[0]) * qs(0);
 		for (int i = 0; i < N; i++)
 		{
-			g += T(m_idxnb[0]) * m_kernel[m_idxnb[0]][m_idxnb[i]] * h(i);
+			g += T(m_idxnb[0]) * m_kernel(m_idxnb[0],m_idxnb[i]) * h(i);
 		}
 	}
     else
@@ -1066,7 +1093,7 @@ void SVM::reduceCholFactor(const Array<double, 1>& T, const int idx)
 		m_R(0,0) = 0;
 	}
 
-    END_PROF();
+    //END_PROF();
 }
 
 
@@ -1166,3 +1193,4 @@ void SVM::addToCholFactor(const Array<double, 1>& T, const int idx, const int it
 	}
 }
 
+#pragma warning (pop)
