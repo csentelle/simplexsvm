@@ -44,6 +44,7 @@ private:
 						    const Array<double, 1>& alpha,
 						    const double beta);
 
+	void reinitializeUpperCache(Array<double, 1>& upperfcache);
 
     // Add a row/column to the factorization (L)
     void addToCholFactor(const Array<double, 1>& T, const int idx, const int iter);
