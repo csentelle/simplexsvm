@@ -149,7 +149,7 @@
 			/>
 			<Tool
 				Name="VCLinkerTool"
-				AdditionalOptions="/FIXED:NO"
+				AdditionalOptions="/FIXED:NO /NODEFAULTLIB:msvcrt.lib"
 				AdditionalDependencies="mllib.lib matlab_gateway.lib libmat.lib libmx.lib libmex.lib"
 				OutputFile="$(OutDir)/SimplexSVM.mexw64"
 				LinkIncremental="1"
@@ -374,10 +374,6 @@
 			Filter="h;hpp;hxx;hm;inl;inc;xsd"
 			UniqueIdentifier="{93995380-89BD-4b04-88EB-625FBE52EBFB}"
 			>
-			<File
-				RelativePath=".\hwprof.h"
-				>
-			</File>
 			<File
 				RelativePath=".\Kernel.h"
 				>

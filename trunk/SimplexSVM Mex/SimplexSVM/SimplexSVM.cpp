@@ -37,12 +37,12 @@ void SimplexSVM(ProxyStream& os,
     {
         if (kernelType == 0)
         {
-			kernel = new LinearKernel();
+			kernel = new LinearKernel(P, T);
             kernelCache = new KernelCache(*kernel, P, T, 500);
         } 
         else if (kernelType == 1)
         {	
-			kernel = new RBFKernel(gamma);
+			kernel = new RBFKernel(P, T, gamma);
             kernelCache = new KernelCache(*kernel, P, T, 500);
         }
         else if (kernelType == 2)

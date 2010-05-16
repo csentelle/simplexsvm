@@ -40,48 +40,80 @@ struct CacheLine
 {
 	// Default constructor
 	CacheLine() 
-		: m_buffer(NULL), m_len(0), m_index(0) {};
+		: m_buffer(NULL), m_len(0), m_index(0), m_validlen(0) {};
 
 	CacheLine(double* buffer, size_t len, size_t index) 
-		: m_buffer(buffer), m_len(len), m_index(index) {};
+		: m_buffer(buffer), m_len(len), m_index(index), m_validlen(0) {};
 
 	double* m_buffer;
 	size_t m_len;	
 	size_t m_index;
+	size_t m_validlen; 
 };
 
 
 class Kernel
 {
 public: 
-	Kernel() {}
+	
+	Kernel(const Array<double, 2>& P, const Array<double, 1>& T) : m_P(P), m_T(T) {}
 	virtual ~Kernel() {}
 
-	virtual double compute(const Array<double, 2>& P, const Array<double,1>& T, 
-		const size_t i, const size_t j) const = 0;
+	virtual void compute(const size_t i, 
+						 const vector<size_t>& indices, 
+						 const size_t len, 
+						 double* buffer) const = 0; 
+
+	virtual double operator()(const size_t i, 
+							const size_t j) const = 0;
+
+
+protected:
+
+	const Array<double, 2>& m_P;
+	const Array<double, 1>& m_T;
 };
 
 class LinearKernel : public Kernel
 {
 public:
 
-	LinearKernel() : Kernel() {};
+	LinearKernel(const Array<double, 2>& P, const Array<double, 1>& T) : Kernel(P, T) {};
 	virtual ~LinearKernel(void) {};
 
-	double compute(const Array<double, 2>& P, const Array<double,1>& T, 
-		const size_t i, const size_t j) const
+	virtual double operator()(const size_t i, 
+							  const size_t j) const
 	{
-		size_t N = T.size();
+		size_t N = m_P.extent(0);
+
 		double sum = 0.0;
 
-		const double *points1 = &P.data()[ i * N ];
-		const double *points2 = &P.data()[ j * N ];
+		const double *points1 = &m_P.data()[ i * N ];
+		const double *points2 = &m_P.data()[ j * N ];
 
 		for (size_t k = 0; k < N; k++)
 			sum += points1[k] * points2[k];
 
-		// Note weakness of Blitz++ arrays, which should be using size_t instead of int.
-		return sum * T((int)i) * T((int)j);
+		return sum * m_T((int)i) * m_T((int)j);
+
+	}
+
+	void compute(const size_t i, const vector<size_t>& indices, const size_t len, double* buffer) const
+	{
+		size_t N = m_P.extent(0);
+
+		for (int l = 0; l < len; ++l)
+		{
+			double sum = 0.0;
+
+			const double *points1 = &m_P.data()[ i * N ];
+			const double *points2 = &m_P.data()[ indices[l] * N ];
+
+			for (size_t k = 0; k < N; k++)
+				sum += points1[k] * points2[k];
+
+			buffer[l] = sum * m_T((int)i) * m_T((int)indices[l]);
+		}
 	}
 };
 
@@ -90,18 +122,19 @@ class RBFKernel: public Kernel
 {
 public:
 
-	RBFKernel(double fpGamma): Kernel(), m_fpGamma(fpGamma) {};
+	RBFKernel(const Array<double, 2>& P, const Array<double, 1>& T, double fpGamma): Kernel(P, T), m_fpGamma(fpGamma) {};
 	virtual ~RBFKernel(void) {};
 
-	double compute(const Array<double, 2>& P, const Array<double, 1>& T, 
-		const size_t i, const size_t j) const
+	virtual double operator()(const size_t i, 
+							const size_t j) const
 	{
-		size_t N = T.size();	
+		size_t N = m_P.extent(0);
+
 		double sum = 0.0;
 		double diff = 0.0;
 
-		const double* points1 = &P.data()[ i * N ];
-		const double* points2 = &P.data()[ j * N ];
+		const double *points1 = &m_P.data()[ i * N ];
+		const double *points2 = &m_P.data()[ j * N ];
 
 		for (size_t k = 0; k < N; k++)
 		{
@@ -109,7 +142,33 @@ public:
 			sum += diff * diff;
 		}
 
-		return exp(-m_fpGamma * sum) * T((int)i) * T((int)j);
+		return exp(-m_fpGamma * sum) * m_T((int)i) * m_T((int)j);
+
+	}
+
+	void compute(const size_t i, 
+				 const vector<size_t>& indices, 
+				 const size_t len, 
+				 double* buffer) const
+	{
+		size_t N = m_P.extent(0);	
+
+		for (int l = 0; l < len; ++l)
+		{
+			double sum = 0.0;
+			double diff = 0.0;
+
+			const double* points1 = &m_P.data()[ i * N ];
+			const double* points2 = &m_P.data()[ indices[l] * N ];
+
+			for (size_t k = 0; k < N; k++)
+			{
+				diff = points1[k] - points2[k];
+				sum += diff * diff;
+			}
+
+			buffer[l] = exp(-m_fpGamma * sum) * m_T((int)i) * m_T((int)indices[l]);
+		}
 	}
 
 private:
@@ -128,29 +187,30 @@ public:
 		const Array<double, 1>& T,
 		unsigned int cacheSize = 100) 
 		: m_kernel(kernel)
-		, m_P(P)
-		, m_T(T)
 		, m_cacheSize(cacheSize * 1024 * 1024)
 		, m_currentAllocSize(0)
 		, m_colIndices(T.size())
-		, m_rowIndices(T.size())
 		, m_activeLength(T.size())
+		, m_cacheDiagonal(T.size())
 	{
 
 		for (int i = 0; i < T.size(); i++)
 		{
-			m_cacheDiagonal[i] = kernel.compute(m_P, m_T, i, i);
+			m_cacheDiagonal[i] = m_kernel(i, i);
 		}
 
 		// Initialize the active list and all of the row indices
-		INSERT_ELEMENTS(m_activeIndices, 0, m_T.size() - 1);
-		INSERT_ELEMENTS(m_rowIndices, 0, m_T.size() - 1);
+		INSERT_ELEMENTS(m_activeIndices, 0, T.size() - 1);
+		INSERT_ELEMENTS(m_rowIndices, 0, T.size() - 1);
 
 		// Add a NULL reference. The item at the end of the list will contain a pointer to
 		// an empty buffer. This is used as a NULL reference since iterators cannot be
 		// specified as NULL.
 		m_cache.push_back(CacheLine());
 		NULLITEM = m_cache.begin();
+
+		for (size_t i = 0; i < m_colIndices.size(); i++)
+			m_colIndices[i] = NULLITEM;
 
 	}
 
@@ -164,7 +224,6 @@ public:
 
 	double operator()(size_t i, size_t j) 
 	{
-		assert(i < m_colIndices.size() && j < m_activeLength);
 		return getColumn(i)[m_rowIndices[j]];
 	}
 
@@ -196,22 +255,39 @@ public:
 	void removeActiveIndex(size_t i)
 	{
 		// Swap this item out with the last element in the list.
-		size_t idx = m_rowIndices[i];
+		size_t idx1 = m_rowIndices[i];
+		size_t idx2 = m_activeLength-1;
 
 		// Proceed through the items in each cache line and swap the computed value to be 
 		// removed with the last in the active list
-		for (list<CacheLine>::iterator pos = m_cache.begin(); pos != m_cache.end(); pos++)
+		for (list<CacheLine>::iterator pos = m_cache.begin(); pos != NULLITEM; )
 		{
-			swapdata((*pos).m_buffer[idx], (*pos).m_buffer[m_activeLength-1]);
-			(*pos).m_len--;
+			// If the buffer length is not the current active length, go ahead and 
+			// remove the item from the cache as an alternative to reallocating and 
+			// refreshing. We assume that the item hasn't been accessed for a while.
+			// Most likely the item has not been accessed for a while.
+			if ((*pos).m_len < m_activeLength)
+			{
+				m_colIndices[(*pos).m_index] = NULLITEM;
+				
+				// Erase method returns the next item. Need to back up by one
+				// for the for-loop.
+				pos = m_cache.erase(pos);
+
+			}
+			else
+			{
+				swapdata((*pos).m_buffer[idx1], (*pos).m_buffer[idx2]);
+				++pos;
+			}
 		}
+
+		m_rowIndices[m_activeIndices[idx1]] = idx2;
+		m_rowIndices[m_activeIndices[idx2]] = idx1;
 
 		// Swap entries in the active indices to place the removed variable at
 		// the end of the current active list.
-		swapdata(m_activeIndices[m_activeLength-1], m_activeIndices[idx]);
-
-		// Swap the pointers to active indices in the indices structure
-		swapdata(m_rowIndices[i], m_rowIndices[m_activeLength-1]);
+		swapdata(m_activeIndices[idx1], m_activeIndices[idx2]);
 
 		// Reduce the length of the active indices
 		m_activeLength--;
@@ -223,7 +299,7 @@ protected:
 	{
 		if ((*m_colIndices[i]).m_buffer != NULL)
 		{
-			refreshColumn(i);
+			refreshColumn(m_colIndices[i]);
 		}
 		else
 		{
@@ -236,61 +312,89 @@ protected:
 	// Proceed through the cache and clean up all cache lines
 	void clearCache()
 	{
-		for (list<CacheLine>::iterator pos = m_cache.begin(); pos != m_cache.end(); ++pos)
+		for (list<CacheLine>::iterator pos = m_cache.begin(); pos != NULLITEM; )
 		{
-			delete [] (*pos).m_buffer;
+			free((*pos).m_buffer);
 			(*pos).m_len = 0;
 			m_colIndices[(*pos).m_index] = NULLITEM;
+
+			pos = m_cache.erase(pos);
 		}		
 	}
 
 
-	void refreshColumn(size_t i)
+	void refreshColumn(list<CacheLine>::iterator& posCacheLine)
 	{
-
-		if (m_colIndices[i] != NULLITEM)
+		if (posCacheLine != NULLITEM)
 		{
 			// Move the item to the front of the list
-			CacheLine cacheline = *m_colIndices[i];
-			m_cache.erase(m_colIndices[i]);
+			CacheLine cacheline = *posCacheLine;
+			
+			m_cache.erase(posCacheLine);
 			m_cache.push_front(cacheline);
+			
+			posCacheLine = m_cache.begin();
 
 			// Determine if the size is correct.
-			if (cacheline.m_len < m_activeLength)
+			if (posCacheLine->m_validlen < m_activeLength)
 			{
-				// Allocate a larger buffer
-				reallocColumn(cacheline);
+				if (posCacheLine->m_len < m_activeLength)
+					reallocColumn(*posCacheLine);
 
 				// Really only need to compute a partial column for speed
-				computeColumn(cacheline.m_buffer, i);
+				computeColumn(posCacheLine);
+
 			}
 		}		 		
 	}
 
 	void reallocColumn(CacheLine& cacheline)
 	{
-		if ((m_activeLength - cacheline.m_len) * sizeof(double) + m_currentAllocSize < m_cacheSize)
-		{
-			m_currentAllocSize -= cacheline.m_len * sizeof(double);
 
-			// We need to resize the column
-			cacheline.m_buffer = (double*)realloc(cacheline.m_buffer, m_activeLength * sizeof(double));
-			cacheline.m_len = m_activeLength;
+		// Note, we are assuming that the item being refreshed is not at 
+		// risk of being deleted, below.
 
-			m_currentAllocSize += m_activeLength * sizeof(double);				
-		}
-		else
+		size_t diffLen = (m_activeLength - cacheline.m_len) * sizeof(double); 
+		if ( diffLen + m_currentAllocSize > m_cacheSize )
 		{
-			throw "out of memory, increase cache size";
+			// Need to free some additional memory, by the mount of diffLen.
+			list<CacheLine>::iterator pos = NULLITEM;
+			pos--;
+							
+			while (diffLen + m_currentAllocSize > m_cacheSize && pos != m_cache.begin())
+			{
+				m_currentAllocSize -= (*pos).m_len*sizeof(double);
+				m_colIndices[(*pos).m_index] = NULLITEM;
+				pos = --m_cache.erase(pos);
+			}
+			
 		}
+
+		m_currentAllocSize -= cacheline.m_len * sizeof(double);
+
+		// We need to resize the column
+		cacheline.m_buffer = (double*)realloc(cacheline.m_buffer, m_activeLength * sizeof(double));
+		cacheline.m_len = m_activeLength;
+
+		m_currentAllocSize += m_activeLength * sizeof(double);				
+
+		assert(m_currentAllocSize <= m_cacheSize);
 	}
 
-	void computeColumn(double* column, size_t i)
+	void computeColumn(list<CacheLine>::iterator& posCacheLine)
 	{		
+		double* column = posCacheLine->m_buffer;
+		size_t idx = posCacheLine->m_index;
+
+		m_kernel.compute(idx, m_activeIndices, m_activeLength, column);
+
 		// Compute the column
-		for (size_t j = 0; j < m_activeIndices.size(); j++)
-			column[j] = compute( i, m_activeIndices[j]);
+		//for (size_t j = 0; j < m_activeLength; j++)
+		//	column[j] = m_kernel( idx, m_activeIndices[j]);
+
+		posCacheLine->m_validlen = m_activeLength;
 	}
+
 
 	// Cache a column of the kernel matrix. Only the portion corresponding
 	// to the active indices is cached.
@@ -301,46 +405,64 @@ protected:
 			size_t len = m_activeLength * sizeof(double);
 
 			// If there is sufficient cache left over
-			if (len + m_currentAllocSize < m_cacheSize)
+			if (len + m_currentAllocSize <= m_cacheSize)
 			{
 				// Just allocate a buffer.
 				m_cache.push_front(CacheLine((double*)malloc(len), 
-					m_activeLength, i));
+											 m_activeLength, i));
 
 				m_colIndices[i] = m_cache.begin();
-
 				m_currentAllocSize += len;
-
-				computeColumn((*m_colIndices[i]).m_buffer, i);
+				computeColumn(m_colIndices[i]);
 
 			}
 			else
 			{
+				//
+				// First, determine how much memory is needed and remove items
+				// until required memory is obtained.
+				//
 				// Delete the LRU and realloc for the purposes of this item. Note
-				// that the very last item is 
-				list<CacheLine>::iterator pos = m_cache.end()-- --;
+				// that the very last item is the NULLITEM. 
+				//
+				list<CacheLine>::iterator pos = NULLITEM;
+				
+				if (pos != m_cache.begin())
+					--pos;
 
-				m_colIndices[(*pos).m_index] = NULLITEM;
-				(*pos).m_index = i;
+				while (len + m_currentAllocSize > m_cacheSize && pos != m_cache.begin())
+				{
+					m_currentAllocSize -= pos->m_len*sizeof(double);
+					m_colIndices[(*pos).m_index] = NULLITEM;
+					pos = --m_cache.erase(pos);
+				}
+				
+				if (pos == NULLITEM)
+					throw exception("Unable to allocate cache line, increase memory");
+
+				m_colIndices[pos->m_index] = NULLITEM;
+				pos->m_index = i;	
+				pos->m_validlen = 0;
 				m_colIndices[i] = pos;
-
+			
 				// This will force a reallocation and recompute on the column
-				refreshColumn(i);
+				refreshColumn(m_colIndices[i]);
+				
+
 			}
 
 
 		}
 		else
 		{
-			throw "cached in invalid column";
+			throw exception("cached in invalid column");
 		}
 
 	}
 
-	// Compute the kernel function
-	double compute(size_t i, size_t j) const
+	void clearMemory(size_t len)
 	{
-		return m_kernel.compute(m_P, m_T, i, j);
+
 	}
 
 	// Kernel function
@@ -357,10 +479,6 @@ protected:
 	// List structure implements LRU caching mechanism
 	list<CacheLine> m_cache;
 	list<CacheLine>::iterator NULLITEM;
-
-	// Referenced data used for computing Hessian
-	const Array<double, 2>& m_P;
-	const Array<double, 1>& m_T;
 
 	// Pre-caching of diagonal elements
 	vector<double> m_cacheDiagonal;
