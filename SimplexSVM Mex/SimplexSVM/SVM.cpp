@@ -13,9 +13,9 @@
 #undef PROFILE
 //#define PROFILE	&Profile
 
-//#include "hwprof.h"
+#include "hwprof.h"
 
-//CHWProfile Profile; 
+CHWProfile Profile; 
 
 
 template <class T>
@@ -46,7 +46,7 @@ SVM::SVM(KernelCache& kernel, double C, double tol, ProxyStream& os)
 
 SVM::~SVM(void)
 {
-
+	delete [] m_kernelCacheBuffer;
 }
 
 void SVM::train(const Array<double, 2>& P, 
@@ -66,7 +66,7 @@ void SVM::train(const Array<double, 2>& P,
 
 	m_kernelCacheBuffer = (double*) malloc(T.size() * sizeof(double));
 	if (!m_kernelCacheBuffer)
-		throw "Error allocating kernel cache buffer";
+		throw exception("Error allocating kernel cache buffer");
 
     //
     // Allocate temporary arrays, these will be used in some functions
@@ -82,9 +82,7 @@ void SVM::train(const Array<double, 2>& P,
 
 
     m_status.resize(fcache.shape());
-    m_idxpossible.reserve(fcache.size());
-    m_idxreplace.reserve(fcache.size());
-   
+
 	//
 	// Initialize the arrays
 	//
@@ -111,6 +109,8 @@ void SVM::train(const Array<double, 2>& P,
     m_idxnb.push_back(initS);
     m_status(initS) = 1;
 
+	m_shrink.assign(alpha.size(), 1);
+
     reinitializeCache(fcache, upperfcache, T, alpha, beta);
 
     m_R(0, 0) = sqrt(m_kernel.getQss(initS));
@@ -126,7 +126,8 @@ void SVM::train(const Array<double, 2>& P,
 
     iter = 0;
     time_t ts = clock();
-	
+	Profile.reset();
+
 	while (min_g < -m_tol )
 
     {
@@ -138,9 +139,12 @@ void SVM::train(const Array<double, 2>& P,
 
 		m_os << infolevel(7) << "fcache = " << fcache << endl;
 
+		BEGIN_PROF("takeStep");
 
         // Perform pivoting on the pivot element
         takeStep(alpha, idx, fcache, T, beta, upperfcache, iter);
+		
+		NEXT_PROF("Update Cache Strategy");
 
 		idx = updateCacheStrategy(working_size, 
 								  T, 
@@ -150,6 +154,7 @@ void SVM::train(const Array<double, 2>& P,
 								  upperfcache, 
 								  min_g);
         
+		END_PROF();
 		// 	If we appear to have hit the stopping criterion, then, proceed 
 		//  first with a reinitialization of a working set corresponding to the 
 		//  partial pricing technique. If this doesn't work, then we need to 
@@ -159,6 +164,7 @@ void SVM::train(const Array<double, 2>& P,
 		//  being worked on for shrinking.
         if (min_g > -m_tol)
         {
+			BEGIN_PROF("Reset working set");
             
             m_workset.erase(m_workset.begin(), m_workset.end());
             
@@ -170,8 +176,10 @@ void SVM::train(const Array<double, 2>& P,
 									  upperfcache, 
 									  min_g);
 
+			END_PROF();
             if (min_g > -m_tol)
             {
+				BEGIN_PROF("Reset shrinking");
 				// Reinitialize the active set. Note that we need to rename
 				// m_fcache_indices to activeIndices since this is what it really
 				// is.
@@ -198,6 +206,7 @@ void SVM::train(const Array<double, 2>& P,
 										  fcache, 
 										  upperfcache, 
 										  min_g);
+				END_PROF();
 
             }
         }
@@ -205,14 +214,20 @@ void SVM::train(const Array<double, 2>& P,
         // Perform shrinking
         else if (iter % shrinking_iter == 0)
         {
-
+			
+			BEGIN_PROF("Shrinking");
 			// Make sure all entries have been updated, not just the working set
             reinitializeCache(fcache, upperfcache, T, alpha, beta);
 
             for (int i = 0; i < m_fcache_indices.size(); i++)
             {
-                if (fcache(m_fcache_indices[i]) > m_tol)
-                {
+                //if (fcache(m_fcache_indices[i]) > m_tol)
+				
+				// Double checking that fcache > 0 prevents shrinking of non-bound
+				// SVs as well other data points that haven't been part of the
+				// working set from being excluded.
+                if (m_shrink[m_fcache_indices[i]] && fcache(m_fcache_indices[i]) > m_tol)
+				{
 
 					m_kernel.removeActiveIndex(m_fcache_indices[i]);
 
@@ -223,6 +238,8 @@ void SVM::train(const Array<double, 2>& P,
 
                 }
             }
+
+			m_shrink.assign(alpha.size(),1);
 
 			// Erase the working set, which will force a new working set computation
 			// on the entire data set.
@@ -235,11 +252,13 @@ void SVM::train(const Array<double, 2>& P,
 									  fcache, 
 									  upperfcache, 
 									  min_g);
-        }
+			END_PROF();    
+		}
+	
     }
 
 
-	//Profile.dumpprint(m_os);
+	Profile.dumpprint(m_os, 0);
     t = ((double)clock() - (double)ts) / (double)CLOCKS_PER_SEC;
 
     // Compute B
@@ -274,9 +293,13 @@ void SVM::takeStep(Array<double, 1>& alpha,
 
     m_os << infolevel(2) << "Pivoting on index: " << idx << endl;
 
+
+	// Force caching of the column
+	m_kernel.updateColumn(idx);
+
     for (int i = 0; i < q.size(); i++)
     {
-        q(i) = m_kernel(idx, m_idxnb[i]);
+		q(i) = m_kernel.getUnsafeCachedItem(idx, m_idxnb[i]);
     }
 
     m_os << infolevel(4) << "q = " << q << endl;
@@ -384,6 +407,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
         int idxh = -1;
         int idxt = -1;
 
+
         for (int i = 0; i < h.size(); i++)
         {
             //
@@ -394,8 +418,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
             if (i < h.size() - 1)
                 idxt = m_idxnb[i];
             else
-                idxt = idx;
-
+                idxt = idx;		
 
             m_os << infolevel(6) << "idxt = " << idxt << endl;
             m_os << infolevel(6) << "h(i) = " << h(i) << endl;
@@ -434,6 +457,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
         m_os << infolevel(2) << "theta = " << theta << endl;
         m_os << infolevel(2) << "fcache(idx) / gamma = " << fcache(idx) / gamma << endl;
 
+
 		// Note that we cannot use the "tol", here, for this decision, but a much tighter
 		// eps, otherwise cycling can occur. 
 		if ( (gamma > -eps) || (theta < fcache(idx)/ gamma - eps))
@@ -471,9 +495,12 @@ void SVM::takeStep(Array<double, 1>& alpha,
                 m_idxb.push_back(idxr);
                 m_status(idxr) = 2;
 
+				m_kernel.updateColumn(idxr);
+
                 // Update the upper bound cache
                 for (int k = 0; k < m_fcache_indices.size(); k++)
-                    upperfcache(m_fcache_indices[k]) += m_kernel(idxr,m_fcache_indices[k]) * m_C;
+                    //upperfcache(k) += m_kernel.getDirect(idxr, k) * m_C;
+                    upperfcache(m_fcache_indices[k]) += m_kernel.getUnsafeCachedItem(idxr,m_fcache_indices[k]) * m_C;
 
             }
             else
@@ -552,6 +579,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
            
         }           
 
+
         if (bAddedIndex == false)
         {
 
@@ -565,10 +593,11 @@ void SVM::takeStep(Array<double, 1>& alpha,
                              m_idxb.end());
 
 
+				m_kernel.updateColumn(idx);
                 // Update the upper bound cache
                 for (int k = 0; k < m_fcache_indices.size(); k++)
-                    upperfcache(m_fcache_indices[k]) -= m_kernel(idx, m_fcache_indices[k]) * m_C;
-
+                    upperfcache(m_fcache_indices[k]) -= m_kernel.getUnsafeCachedItem(idx, m_fcache_indices[k]) * m_C;
+					//upperfcache(k) -= m_kernel.getDirect(idx, k) * m_C;
             }
 
             m_os << " idx = " << idx << " idxr = " << idxr << endl;
@@ -664,9 +693,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
             m_os << infolevel(4) << "h = " << h << endl;
             
         } // 
-        
     } // while
-
 }
 
 
@@ -679,12 +706,12 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
                              double& ming)
 {
 
-    int idxmin = 0;
+	BEGIN_PROF("Update Cache Strategy");
 
     if (m_workset.empty())
     {
-        reinitializeCache(fcache, upperfcache, T, alpha, beta);
 
+		reinitializeCache(fcache, upperfcache, T, alpha, beta);
 		//
 		// It is possible that the process of shrinking has removed a number
 		// of items from the cache list where the number of remaining points
@@ -707,7 +734,6 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
 			// Resort the indices back to the way they were. We no longer need
 			// the sorted indices.
 			sort(m_fcache_indices.begin(), m_fcache_indices.end());
-
 		}
 		else
 		{
@@ -716,12 +742,13 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
 				             m_fcache_indices.end());
 		}
 
+
         // Sort the indices
         sort(m_workset.begin(), m_workset.end());
-
     }
     else
     {
+
 		for (int i = 0; i < m_workset.size(); i++)
 		{
 			int idx = m_workset[i];
@@ -739,12 +766,11 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
 				fcache(idx) = 0.0;
             }
 		}
-
-		for (int k = 0; k < m_idxnb.size(); k++)
+		
+		for (size_t k = 0; k < m_idxnb.size(); k++)
 		{
-			// Obtain a cache line from the Kernel object. This acts as a speed-up as 
-			// it prevents a function invokation and comparison each time within the for-loop. 
-			//double* pKernelCacheLine = m_kernel[m_idxnb[k]];
+
+			m_kernel.updateColumn(m_idxnb[k]);
 
 			for (int i = 0; i < m_workset.size(); i++)
 			{
@@ -752,22 +778,25 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
 
 				if (m_status(idx) == 0)
 				{
-					fcache(idx) += m_kernel(m_idxnb[k],idx) * alpha(m_idxnb[k]);
+					fcache(idx) += m_kernel.getUnsafeCachedItem(m_idxnb[k], idx) * alpha(m_idxnb[k]);
 				}
 				else if (m_status(idx) == 2)
 				{
-					fcache(idx) -= m_kernel(m_idxnb[k],idx) * alpha(m_idxnb[k]);
+					fcache(idx) -= m_kernel.getUnsafeCachedItem(m_idxnb[k], idx) * alpha(m_idxnb[k]);
 				}
 			}
 		}
+
     }
 
     // Find the minimum in the workset.
-    idxmin = 0;
+    int idxmin = 0;
     ming = 1e300;
 
 	for (int i = 0; i < m_workset.size(); i++)
     {
+		m_shrink[m_workset[i]] = fcache(m_workset[i]) > 0 && m_shrink[m_workset[i]];
+
         if (fcache(m_workset[i]) < ming)
         {
             ming = fcache(m_workset[i]);
@@ -775,27 +804,28 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
         }
     }
 
+	END_PROF();
     return idxmin;
-
+	
 }
 
 void SVM::reinitializeUpperCache(Array<double, 1>& upperfcache)
 {
-	
+	BEGIN_PROF("reinitializeUpperCache");
+
 	for (int i = 0; i < m_fcache_indices.size(); i++)
 		upperfcache(m_fcache_indices[i]) = 0;
 
-	for (int i = 0; i < m_fcache_indices.size(); i++)
+	for (int i = 0; i < m_idxb.size(); i++)
 	{
-		int idx = m_fcache_indices[i];
-		
-		if (m_status(idx) == 2)
-		{
-			// Update the upper bound cache
-			for (int k = 0; k < m_fcache_indices.size(); k++)
-				upperfcache(m_fcache_indices[k]) += m_kernel(idx,m_fcache_indices[k]) * m_C;
-		}
+		int idx = m_idxb[i];
+		m_kernel.updateColumn(idx);
+
+		// Update the upper bound cache
+		for (int k = 0; k < m_fcache_indices.size(); k++)
+			upperfcache(m_fcache_indices[k]) += m_kernel.getUnsafeCachedItem(idx, m_fcache_indices[k]) * m_C;
 	}
+	END_PROF();
 }
 
 
@@ -805,6 +835,7 @@ void SVM::reinitializeCache(Array<double, 1>& fcache,
 							const Array<double, 1>& alpha,
 							const double beta)
 {
+	BEGIN_PROF("reinitializeCache");
     // Assume we are only going to update the cache for active indices. 
 	// We will rely on the kernel cache which might have a different 
 	// ordering for the active indices.
@@ -827,25 +858,25 @@ void SVM::reinitializeCache(Array<double, 1>& fcache,
         }
 	}
 
-	//const vector<size_t> activeIndices = m_kernel.getActiveIndices();
-
 	for (size_t k = 0; k < m_idxnb.size(); k++)
 	{
-		
+		m_kernel.updateColumn(m_idxnb[k]);
+
 		for (size_t i = 0; i < m_fcache_indices.size(); i++)
 		{
 			int idx = m_fcache_indices[i];
 
 			if (m_status(idx) == 0)
 			{
-				fcache(idx) += m_kernel(m_idxnb[k],idx) * alpha(m_idxnb[k]);
+				fcache(idx) += m_kernel.getUnsafeCachedItem(m_idxnb[k], idx) * alpha(m_idxnb[k]);
 			}
 			else if (m_status(idx) == 2)
 			{
-				fcache(idx) -= m_kernel(m_idxnb[k],idx) * alpha(m_idxnb[k]);
+				fcache(idx) -= m_kernel.getUnsafeCachedItem(m_idxnb[k], idx) * alpha(m_idxnb[k]);
 			}
 		}
 	}
+	END_PROF();
 }
 
 void SVM::solveSubProblem(const Array<double, 2>& R, 
@@ -856,7 +887,7 @@ void SVM::solveSubProblem(const Array<double, 2>& R,
                           double& g)
 {
 
-    //BEGIN_PROF("solveSubProblem");
+    BEGIN_PROF("solveSubProblem");
     //
     // Here, we are going to use a Cholesky factorization and the Shur complement to 
     // solve the system of equations associated with the sub-problem
@@ -892,11 +923,13 @@ void SVM::solveSubProblem(const Array<double, 2>& R,
 
 		// Compute the rhs for solving R'Rhz = rhs. Note that we compute the negative of the rhs at this point 
 		// in anticipation of computing -R'hz = rhs
+		m_kernel.updateColumn(m_idxnb[0]);
+
 		for (int i = 0; i < N - 1; i++)
 		{
 			assert(i >= 0 && i < N - 1);
             hz(i) = T(m_idxnb[0]) * T(m_idxnb[i + 1]) * (m_kernel.getQss(m_idxnb[0]) * hy - qs(0)) +
-				     qs(i + 1) - m_kernel(m_idxnb[i + 1],m_idxnb[0]) * hy;
+				     qs(i + 1) - m_kernel.getUnsafeCachedItem(m_idxnb[0], m_idxnb[i + 1]) * hy;
 		}
 
         // Perform backward, forward solve to obtain hz.
@@ -917,7 +950,7 @@ void SVM::solveSubProblem(const Array<double, 2>& R,
 		g = -T(m_idxnb[0]) * qs(0);
 		for (int i = 0; i < N; i++)
 		{
-			g += T(m_idxnb[0]) * m_kernel(m_idxnb[0],m_idxnb[i]) * h(i);
+			g += T(m_idxnb[0]) * m_kernel.getUnsafeCachedItem(m_idxnb[0], m_idxnb[i]) * h(i);
 		}
 	}
     else
@@ -929,6 +962,8 @@ void SVM::solveSubProblem(const Array<double, 2>& R,
         h(0) = T(m_idxnb[0]) * ys;
         g = T(m_idxnb[0]) * (m_kernel.getQss(m_idxnb[0]) * h(0) - qs(0));
 	}
+
+	END_PROF();
 }
 
 inline Array<double, 1>& SVM::fwrdSolve(const Array<double, 2>& R, Array<double, 1>& x)
@@ -1007,6 +1042,7 @@ inline void computeGivens(const double a,
 
 void SVM::reduceCholFactor(const Array<double, 1>& T, const int idx)
 {
+	BEGIN_PROF("reduceCholFactor");
 
 	//
 	//   Here, we downdate the Cholesky factorization by removing the 
@@ -1124,13 +1160,14 @@ void SVM::reduceCholFactor(const Array<double, 1>& T, const int idx)
 		m_R.reference(m_RStorage(Range(0,0), Range(0,0)));
 		m_R(0,0) = 0;
 	}
+	END_PROF();
 
 }
 
 
 void SVM::addToCholFactor(const Array<double, 1>& T, const int idx, const int iter)
 {
-    
+    BEGIN_PROF("addToCholFactor");
 	//  
 	//   Q, here, is the portion of the larger Q for the current non-bound support
 	//   vectors. The last row/column represents the row/column to be added. T
@@ -1173,7 +1210,6 @@ void SVM::addToCholFactor(const Array<double, 1>& T, const int idx, const int it
 		}
 		else
 		{
-	                     
 			//
 			// Solve the following system
 			// Z = [-T(1) * T(2:end-1); eye(length(T) - 2) ] ;
@@ -1181,13 +1217,17 @@ void SVM::addToCholFactor(const Array<double, 1>& T, const int idx, const int it
 			//
 			Array<double, 1> q(N - 1);
 
+			m_kernel.updateColumn(m_idxnb[0]);
+			m_kernel.updateColumn(idx);
+			
+
 			// Form the RHS. Note that we are explicitly forming -rhs.
 			for (int i = 0; i < N - 1; i++)
 			{
 			   q(i) = -T(m_idxnb[0]) * T(m_idxnb[i+1]) * 
-						(m_kernel.getQss(m_idxnb[0]) * -T(m_idxnb[0]) * T(idx) + m_kernel(m_idxnb[0],idx)) + 
-						m_kernel(m_idxnb[i+1],m_idxnb[0]) * -T(m_idxnb[0]) * T(idx) + 
-						m_kernel(m_idxnb[i+1],idx);
+						(m_kernel.getQss(m_idxnb[0]) * -T(m_idxnb[0]) * T(idx) + m_kernel.getUnsafeCachedItem(m_idxnb[0],idx)) + 
+						m_kernel.getUnsafeCachedItem(m_idxnb[0], m_idxnb[i+1]) * -T(m_idxnb[0]) * T(idx) + 
+						m_kernel.getUnsafeCachedItem(idx, m_idxnb[i+1]);
 
 			}
 
@@ -1206,8 +1246,8 @@ void SVM::addToCholFactor(const Array<double, 1>& T, const int idx, const int it
 					m_R(i, N - 1) -= m_R(j,i) * m_R(j, N - 1);
 				m_R(i, N - 1) /= m_R(i, i);
 
-
 			}
+
 
 			// Solve for rho
 			double sigma = 0;
@@ -1216,12 +1256,12 @@ void SVM::addToCholFactor(const Array<double, 1>& T, const int idx, const int it
 
 
 			m_R(N - 1,N - 1) = sqrt(m_kernel.getQss(m_idxnb[0]) - 2 * T(m_idxnb[0]) * T(idx) * 
-									m_kernel(m_idxnb[0],idx) + m_kernel.getQss(idx) - sigma);
-
+									m_kernel.getUnsafeCachedItem(m_idxnb[0],idx) + m_kernel.getQss(idx) - sigma);
 
 
 		}
 	}
+	END_PROF();
 }
 
 #pragma warning (pop)

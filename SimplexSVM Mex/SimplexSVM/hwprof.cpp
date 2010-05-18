@@ -165,16 +165,17 @@ void dumpprint(ProxyStream& os, const char*Text)
 int dumpprint(ProxyStream& os, __int64 x)
 {
 	char Text[100];
-	ltoa(int(x),Text,10);
+	_ltoa_s(int(x),Text,10);
 	dumpprint(os, Text);
-	return ::strlen(Text);
+	return (int)::strlen(Text);
 };
 
             
 void dumpprint(ProxyStream& os, __int64 x, int Scale, const char*xText)
 {
 	char Text[100];
-	ltoa(int(x),Text+1,10);
+
+	_ltoa_s(int(x),Text + 1,99,10);
 
 	int Dot = 1;
 	for(Dot=1; Text[Dot]; Dot++);
@@ -298,7 +299,7 @@ void CHWProfile::dumpprint(ProxyStream& os, int Hide)const
 		if(xTicks < 0) xTicks = 0;
 		ShowTime -= xTicks;
 		TimeNotShown -= xTicks;
-		int iLFileName = ::strlen(That->FileName);
+		int iLFileName = (int)::strlen(That->FileName);
 
 		if(LFileName < iLFileName) 
 			LFileName = iLFileName;
@@ -315,7 +316,7 @@ void CHWProfile::dumpprint(ProxyStream& os, int Hide)const
 		int LLine = ::dumpprint(os,That->Line);
 		::dumpprint(os,"):");
 		
-		int Spaces = LFileName + 6 - ::strlen(That->FileName) - LLine;
+		int Spaces = LFileName + 6 - (int)::strlen(That->FileName) - LLine;
 		while(Spaces > 0)
 		{
 			::dumpprint(os," ");

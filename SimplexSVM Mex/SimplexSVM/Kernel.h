@@ -126,7 +126,7 @@ public:
 	virtual ~RBFKernel(void) {};
 
 	virtual double operator()(const size_t i, 
-							const size_t j) const
+							  const size_t j) const
 	{
 		size_t N = m_P.extent(0);
 
@@ -224,20 +224,23 @@ public:
 
 	double operator()(size_t i, size_t j) 
 	{
-		return getColumn(i)[m_rowIndices[j]];
+		updateColumn(i);
+		return getCachedItem(i,j);
 	}
 
-	void getColumn(size_t idx, double* buffer, size_t& len)
-	{
-		double* colBuffer = getColumn(idx);
-
-		len = min(len, (*m_colIndices[idx]).m_len);
-		memcpy(buffer, colBuffer, len * sizeof(double));
+	double getDirect(size_t i, size_t j)
+	{		
+		return m_kernel(i, j);
 	}
 
-	const vector<size_t>& getActiveIndices() const
+	const size_t& indexMap(size_t i) const
 	{
-		return m_activeIndices;
+		return m_rowIndices[i];
+	}
+
+	size_t getActiveSize() const
+	{
+		return m_activeLength;
 	}
 
 	double getQss(size_t i)
@@ -293,11 +296,25 @@ public:
 		m_activeLength--;
 	}
 
-protected:
-
-	double* getColumn(size_t i)
+	bool IsCached(size_t i)
 	{
-		if ((*m_colIndices[i]).m_buffer != NULL)
+		return m_colIndices[i]->m_buffer != NULL;
+	}
+
+	double getUnsafeCachedItem(size_t i, size_t j)
+	{
+		// Assumes the column is already cached!
+		return getCachedItem(i, j);
+	}
+
+	// The user is allowed to force a cache of a column, where subsequently, 
+	// a call to getUnsafeCachedItems can be called. The getUnsafeCachedItems
+	// is used for fast access where it is assumed this is called first!
+	void updateColumn(size_t i)
+	{
+		// If the column is already cached, just update the column, otherwise
+		// prepare to cache the column.
+		if (NULL != m_colIndices[i]->m_buffer)
 		{
 			refreshColumn(m_colIndices[i]);
 		}
@@ -305,8 +322,17 @@ protected:
 		{
 			cacheColumn(i);
 		}
+	}
 
-		return (*m_colIndices[i]).m_buffer;
+	
+
+protected:
+
+
+	double getCachedItem(size_t i, size_t j)
+	{
+		assert(IsCached(i) && m_rowIndices[j] < m_activeLength);
+		return m_colIndices[i]->m_buffer[m_rowIndices[j]];
 	}
 
 	// Proceed through the cache and clean up all cache lines
@@ -325,27 +351,26 @@ protected:
 
 	void refreshColumn(list<CacheLine>::iterator& posCacheLine)
 	{
-		if (posCacheLine != NULLITEM)
+		assert(posCacheLine != NULLITEM);
+
+		// Move the item to the front of the list
+		CacheLine cacheline = *posCacheLine;
+		
+		m_cache.erase(posCacheLine);
+		m_cache.push_front(cacheline);
+		
+		posCacheLine = m_cache.begin();
+
+		// Determine if the size is correct.
+		if (posCacheLine->m_validlen < m_activeLength)
 		{
-			// Move the item to the front of the list
-			CacheLine cacheline = *posCacheLine;
-			
-			m_cache.erase(posCacheLine);
-			m_cache.push_front(cacheline);
-			
-			posCacheLine = m_cache.begin();
+			if (posCacheLine->m_len < m_activeLength)
+				reallocColumn(*posCacheLine);
 
-			// Determine if the size is correct.
-			if (posCacheLine->m_validlen < m_activeLength)
-			{
-				if (posCacheLine->m_len < m_activeLength)
-					reallocColumn(*posCacheLine);
+			// Really only need to compute a partial column for speed
+			computeColumn(posCacheLine);
 
-				// Really only need to compute a partial column for speed
-				computeColumn(posCacheLine);
-
-			}
-		}		 		
+		}
 	}
 
 	void reallocColumn(CacheLine& cacheline)
@@ -387,10 +412,6 @@ protected:
 		size_t idx = posCacheLine->m_index;
 
 		m_kernel.compute(idx, m_activeIndices, m_activeLength, column);
-
-		// Compute the column
-		//for (size_t j = 0; j < m_activeLength; j++)
-		//	column[j] = m_kernel( idx, m_activeIndices[j]);
 
 		posCacheLine->m_validlen = m_activeLength;
 	}
@@ -448,10 +469,7 @@ protected:
 				// This will force a reallocation and recompute on the column
 				refreshColumn(m_colIndices[i]);
 				
-
 			}
-
-
 		}
 		else
 		{

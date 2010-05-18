@@ -84,14 +84,11 @@ private:
 
     vector<int> m_idxnb;
     vector<int> m_idxb;
-    vector<int> m_changed;
     vector<int> m_workset;
     vector<int> m_fcache_indices;
-    vector<int> m_activeset;
-    vector<int> m_idxpossible;
-    vector<int> m_idxreplace;
     Array<int, 1> m_status;
 
+	vector<int> m_shrink;
     Array<double, 2> m_R;
 
 
