@@ -30,20 +30,20 @@ void SimplexSVM(ProxyStream& os,
     alpha.resize(T.shape());
     alpha(Range::all()) = 0.0;
 
-    KernelCache* kernelCache = NULL;
-	Kernel* kernel = NULL;
+    KernelCache<double, float>* kernelCache = NULL;
+	Kernel<double, float>* kernel = NULL;
 
     try
     {
         if (kernelType == 0)
         {
-			kernel = new LinearKernel(P, T);
-            kernelCache = new KernelCache(*kernel, P, T, 500);
+			kernel = new LinearKernel<double, float>(P, T);
+            kernelCache = new KernelCache<double, float>(*kernel, 500);
         } 
         else if (kernelType == 1)
         {	
-			kernel = new RBFKernel(P, T, gamma);
-            kernelCache = new KernelCache(*kernel, P, T, 500);
+			kernel = new RBFKernel<double, float>(P, T, gamma);
+            kernelCache = new KernelCache<double, float>(*kernel, 500);
         }
         else if (kernelType == 2)
         {
