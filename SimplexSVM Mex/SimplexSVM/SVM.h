@@ -16,7 +16,7 @@ class SVM
 {
 public:
 
-    SVM(KernelCache& kernel, double C, double tol, ProxyStream& os);
+    SVM(KernelCache<double, float>& kernel, double C, double tol, ProxyStream& os);
     virtual ~SVM(void);
 
     void train(const Array<double, 2>& P, 
@@ -77,7 +77,7 @@ private:
 	inline Array<double, 1>& fwrdSolve(const Array<double, 2>& R, Array<double, 1>& x);
 	inline Array<double, 1>& bkwrdSolve(const Array<double, 2>& R, Array<double, 1>& x);
 
-    KernelCache& m_kernel;
+    KernelCache<double, float>& m_kernel;
     ProxyStream& m_os;
     const double m_C;
 	const double m_tol;

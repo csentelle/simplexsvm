@@ -10,9 +10,8 @@
 #include "time.h"
 #include "stdlib.h"
 
-#undef PROFILE
-//#define PROFILE	&Profile
-
+//#undef PROFILE
+#define PROFILE	&Profile
 #include "hwprof.h"
 
 CHWProfile Profile; 
@@ -33,7 +32,7 @@ struct IndexCompare
 };
 
 
-SVM::SVM(KernelCache& kernel, double C, double tol, ProxyStream& os)
+SVM::SVM(KernelCache<double, float>& kernel, double C, double tol, ProxyStream& os)
 : m_kernel(kernel)
 , m_C(C)
 , m_tol(tol)
@@ -177,38 +176,38 @@ void SVM::train(const Array<double, 2>& P,
 									  min_g);
 
 			END_PROF();
-            if (min_g > -m_tol)
-            {
-				BEGIN_PROF("Reset shrinking");
-				// Reinitialize the active set. Note that we need to rename
-				// m_fcache_indices to activeIndices since this is what it really
-				// is.
-                m_fcache_indices.erase(m_fcache_indices.begin(),
-                                       m_fcache_indices.end());
-				
-                for (int i = 0; i < fcache.size(); i++)
-                    m_fcache_indices.push_back(i);
+    //        if (min_g > -m_tol)
+    //        {
+				//BEGIN_PROF("Reset shrinking");
+				//// Reinitialize the active set. Note that we need to rename
+				//// m_fcache_indices to activeIndices since this is what it really
+				//// is.
+    //            m_fcache_indices.erase(m_fcache_indices.begin(),
+    //                                   m_fcache_indices.end());
+				//
+    //            for (int i = 0; i < fcache.size(); i++)
+    //                m_fcache_indices.push_back(i);
 
-				// Erase the working set, which will force a new working set computation
-				// on the entire data set.
-				m_workset.erase(m_workset.begin(), m_workset.end());
-                
-				// Reset kernel caching. This will force recomputation of entire columns
-				m_kernel.resetActiveToFull();
+				//// Erase the working set, which will force a new working set computation
+				//// on the entire data set.
+				//m_workset.erase(m_workset.begin(), m_workset.end());
+    //            
+				//// Reset kernel caching. This will force recomputation of entire columns
+				//m_kernel.resetActiveToFull();
 
-				// reinitialize the upper cache
-				reinitializeUpperCache(upperfcache);
+				//// reinitialize the upper cache
+				//reinitializeUpperCache(upperfcache);
 
-                idx = updateCacheStrategy(working_size, 
-                                          T, 
-                                          alpha, 
-                                          beta, 
-										  fcache, 
-										  upperfcache, 
-										  min_g);
-				END_PROF();
+    //            idx = updateCacheStrategy(working_size, 
+    //                                      T, 
+    //                                      alpha, 
+    //                                      beta, 
+				//						  fcache, 
+				//						  upperfcache, 
+				//						  min_g);
+				//END_PROF();
 
-            }
+    //        }
         }
 
         // Perform shrinking
@@ -294,14 +293,16 @@ void SVM::takeStep(Array<double, 1>& alpha,
     m_os << infolevel(2) << "Pivoting on index: " << idx << endl;
 
 
+	BEGIN_PROF("H");
 	// Force caching of the column
 	m_kernel.updateColumn(idx);
-
+ 
+	NEXT_PROF("H2");
     for (int i = 0; i < q.size(); i++)
     {
 		q(i) = m_kernel.getUnsafeCachedItem(idx, m_idxnb[i]);
     }
-
+	END_PROF();
     m_os << infolevel(4) << "q = " << q << endl;
 
     // First, we are adding a new variable to the basis, identified by idx    
@@ -309,6 +310,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
 
     m_os << infolevel(4) << "m_status = " << m_status(idx) << endl;
 
+	BEGIN_PROF("TAKE STEP 1");
     if (m_status(idx) == 0)
     {    
 
@@ -393,6 +395,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
        
     }
     
+	NEXT_PROF("TAKE STEP 2");
     bool bAddedIndex = false;
                 
     while (abs(fcache(idx)) > m_tol)
@@ -694,6 +697,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
             
         } // 
     } // while
+	END_PROF();
 }
 
 
@@ -749,45 +753,33 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
     else
     {
 
+		for (size_t k = 0; k < m_idxnb.size(); k++)
+			m_kernel.updateColumn(m_idxnb[k]);
+
 		for (int i = 0; i < m_workset.size(); i++)
 		{
 			int idx = m_workset[i];
 
 			if (m_status(idx) == 0)
-            {
-				fcache(idx) = -1 - T(idx) * beta + upperfcache(idx);
-            }
-            else if (m_status(idx) == 2)
-            {
-                fcache(idx) =  1 + T(idx) * beta - upperfcache(idx);
-            }
-            else
-            {
-				fcache(idx) = 0.0;
-            }
-		}
-		
-		for (size_t k = 0; k < m_idxnb.size(); k++)
-		{
-
-			m_kernel.updateColumn(m_idxnb[k]);
-
-			for (int i = 0; i < m_workset.size(); i++)
 			{
-				int idx = m_workset[i];
-
-				if (m_status(idx) == 0)
-				{
+				fcache(idx) = -1 - T(idx) * beta + upperfcache(idx);
+				for (int k = 0; k < m_idxnb.size(); k++)
 					fcache(idx) += m_kernel.getUnsafeCachedItem(m_idxnb[k], idx) * alpha(m_idxnb[k]);
-				}
-				else if (m_status(idx) == 2)
-				{
+
+			}
+			else if (m_status(idx) == 2)
+			{
+				fcache(idx) =  1 + T(idx) * beta - upperfcache(idx);
+				for (int k = 0; k < m_idxnb.size(); k++)
 					fcache(idx) -= m_kernel.getUnsafeCachedItem(m_idxnb[k], idx) * alpha(m_idxnb[k]);
-				}
+
+			}
+			else
+			{
+				fcache(idx) = 0.0;
 			}
 		}
-
-    }
+	}
 
     // Find the minimum in the workset.
     int idxmin = 0;
@@ -840,6 +832,9 @@ void SVM::reinitializeCache(Array<double, 1>& fcache,
 	// We will rely on the kernel cache which might have a different 
 	// ordering for the active indices.
 
+	for (size_t k = 0; k < m_idxnb.size(); k++)
+		m_kernel.updateColumn(m_idxnb[k]);
+
     for (int i = 0; i < m_fcache_indices.size(); i++)
 	{
         int idx = m_fcache_indices[i];
@@ -847,35 +842,45 @@ void SVM::reinitializeCache(Array<double, 1>& fcache,
 		if (m_status(idx) == 0)
         {
 			fcache(idx) = -1 - T(idx) * beta + upperfcache(idx);
+			for (int k = 0; k < m_idxnb.size(); k++)
+				fcache(idx) += m_kernel.getUnsafeCachedItem(m_idxnb[k], idx) * alpha(m_idxnb[k]);
+
         }
         else if (m_status(idx) == 2)
         {
             fcache(idx) =  1 + T(idx) * beta - upperfcache(idx);
-        }
-        else
+			for (int k = 0; k < m_idxnb.size(); k++)
+				fcache(idx) -= m_kernel.getUnsafeCachedItem(m_idxnb[k], idx) * alpha(m_idxnb[k]);
+
+		}
+		else
         {
 			fcache(idx) = 0.0;
         }
 	}
 
-	for (size_t k = 0; k < m_idxnb.size(); k++)
-	{
-		m_kernel.updateColumn(m_idxnb[k]);
+	//for (size_t k = 0; k < m_idxnb.size(); k++)
+	//{
+	//	BEGIN_PROF("REINITIALIZECACHE UPDATECOLUMN");		
+	//	m_kernel.updateColumn(m_idxnb[k]);
+	//	END_PROF();
 
-		for (size_t i = 0; i < m_fcache_indices.size(); i++)
-		{
-			int idx = m_fcache_indices[i];
+	//	BEGIN_PROF("REINITIALIZECACHE COMPUTING");
+	//	for (size_t i = 0; i < m_fcache_indices.size(); i++)
+	//	{
+	//		int idx = m_fcache_indices[i];
 
-			if (m_status(idx) == 0)
-			{
-				fcache(idx) += m_kernel.getUnsafeCachedItem(m_idxnb[k], idx) * alpha(m_idxnb[k]);
-			}
-			else if (m_status(idx) == 2)
-			{
-				fcache(idx) -= m_kernel.getUnsafeCachedItem(m_idxnb[k], idx) * alpha(m_idxnb[k]);
-			}
-		}
-	}
+	//		if (m_status(idx) == 0)
+	//		{
+	//			fcache(idx) += m_kernel.getUnsafeCachedItem(m_idxnb[k], idx) * alpha(m_idxnb[k]);
+	//		}
+	//		else if (m_status(idx) == 2)
+	//		{
+	//			fcache(idx) -= m_kernel.getUnsafeCachedItem(m_idxnb[k], idx) * alpha(m_idxnb[k]);
+	//		}
+	//	}
+	//	END_PROF();
+	//}
 	END_PROF();
 }
 
