@@ -7,8 +7,8 @@ BZ_USING_NAMESPACE(blitz)
 #include <vector>
 using namespace std;
 
-#define PROFILE	&Profile
-//#undef PROFILE
+//#define PROFILE	&Profile
+#undef PROFILE
 #include "hwprof.h"
 
 extern CHWProfile Profile; 
@@ -47,15 +47,16 @@ struct CacheLine
 {
 	// Default constructor
 	CacheLine() 
-		: m_buffer(NULL), m_len(0), m_index(0), m_validlen(0) {};
+		: m_buffer(NULL), m_len(0), m_index(0), m_validlen(0), m_lock(false) {};
 
 	CacheLine(KType* buffer, size_t len, size_t index) 
-		: m_buffer(buffer), m_len(len), m_index(index), m_validlen(0) {};
+		: m_buffer(buffer), m_len(len), m_index(index), m_validlen(0), m_lock(false) {};
 
 	KType* m_buffer;
 	size_t m_len;	
 	size_t m_index;
 	size_t m_validlen; 
+	bool m_lock;
 };
 
 
@@ -167,19 +168,26 @@ public:
 	{
 		size_t N = m_P.extent(0);	
 
+		const DataType* points1 = &m_P.data()[ i * N ];
+		const DataType* points2buf = m_P.data();
+
+		DataType sum = 0.0;
+		DataType diff = 0.0;
+		
 		for (int l = 0; l < len; ++l)
 		{
-			DataType sum = 0.0;
-			DataType diff = 0.0;
 
-			const DataType* points1 = &m_P.data()[ i * N ];
-			const DataType* points2 = &m_P.data()[ indices[l] * N ];
+			sum = 0.0;
+			diff = 0.0;
+
+			const DataType* points2 = &points2buf[ indices[l] * N ];
 
 			for (size_t k = 0; k < N; k++)
 			{
 				diff = points1[k] - points2[k];
 				sum += diff * diff;
 			}
+
 			buffer[l] = 
 				static_cast<KType>(exp(-m_fpGamma * sum) * m_T((int)i) * m_T((int)indices[l]));
 		}
@@ -270,6 +278,8 @@ public:
 		m_activeLength = m_activeIndices.size();
 	}
 
+
+
 	void removeActiveIndex(size_t i)
 	{
 		BEGIN_PROF("REMOVE ACTIVE INDEX");
@@ -287,13 +297,17 @@ public:
 			// Most likely the item has not been accessed for a while.
 			if ((*pos).m_len < m_activeLength)
 			{
+				BEGIN_PROF("REMOVE CACHE ENTRY");
 				pos = removeCacheEntry(pos);
+				END_PROF();
 
 			}
 			else
 			{
+				BEGIN_PROF("SWAP DATA IN BUFFERS");
 				swapdata((*pos).m_buffer[idx1], (*pos).m_buffer[idx2]);
 				++pos;
+				END_PROF();
 			}
 		}
 
@@ -309,7 +323,7 @@ public:
 		END_PROF();
 	}
 
-	bool IsCached(size_t i)
+	bool isCached(size_t i)
 	{
 		return m_colIndices[i]->m_buffer != NULL;
 	}
@@ -318,6 +332,7 @@ public:
 	{
 		// Assumes the column is already cached!
 		return getCachedItem(i, j);
+
 	}
 
 	// The user is allowed to force a cachee  of a column, where subsequently, 
@@ -325,7 +340,7 @@ public:
 	// is used for fast access where it is assumed this is called first!
 	void updateColumn(size_t i)
 	{
-		BEGIN_PROF("updateColumn");
+		//BEGIN_PROF("updateColumn");
 		// If the column is already cached, just update the column, otherwise
 		// prepare to cache the column.
 		if (NULL != m_colIndices[i]->m_buffer)
@@ -336,10 +351,34 @@ public:
 		{
 			cacheColumn(i);
 		}
-		END_PROF();
+		//END_PROF();
 	}
 
+	const vector<size_t>& getRowIndices() const { return m_rowIndices; }
 	
+	//
+	// This method allows direct access to a precomputed kernel buffer and 
+	// locks the buffer to prevent future caching from replacing the buffer. 
+	// Locking multiple buffers can prevent future caching causing an exception
+	// to be thrown.
+	//
+	const KType* getColumnAndLock(size_t i) 
+	{ 
+		updateColumn(i);
+		m_colIndices[i]->m_lock = true;
+		return m_colIndices[i]->m_buffer; 
+	}
+
+	void unlockColumn(size_t i)
+	{
+		m_colIndices[i]->m_lock = false;
+	}
+
+	void unlockAllColumns(void) 
+	{
+		for (list_iter pos = m_cache.begin(); pos != NULLITEM; ++pos )
+			pos->m_lock = false;
+	}
 
 protected:
 
@@ -361,7 +400,7 @@ protected:
 
 	void refreshColumn(list_iter& posCacheLine)
 	{
-		BEGIN_PROF("REFRESH COLUMN");
+		//BEGIN_PROF("REFRESH COLUMN");
 		assert(posCacheLine != NULLITEM);
 
 		// Move the item to the front of the list
@@ -382,12 +421,12 @@ protected:
 			computeColumn(posCacheLine);
 
 		}
-		END_PROF();
+		//END_PROF();
 	}
 
 	void reallocColumn(CacheLine<KType>& cacheline)
 	{
-		BEGIN_PROF("REALLOC COLUMN");
+		//BEGIN_PROF("REALLOC COLUMN");
 		// Note, we are assuming that the item being refreshed is not at 
 		// risk of being deleted, below.
 
@@ -417,11 +456,14 @@ protected:
 		m_currentAllocSize += m_activeLength * sizeof(KType);				
 
 		assert(m_currentAllocSize <= m_cacheSize);
-		END_PROF();
+		//END_PROF();
 	}
 
 	list_iter removeCacheEntry(list_iter& pos)
 	{
+
+		if (pos->m_lock) return(pos);
+
 		// Remove reference from the col indices
 		m_colIndices[pos->m_index] = NULLITEM;
 
@@ -434,14 +476,14 @@ protected:
 
 	void computeColumn(list_iter& posCacheLine)
 	{		
-		BEGIN_PROF("COMPUTE COLUMN");
+		//BEGIN_PROF("COMPUTE COLUMN");
 		KType* column = posCacheLine->m_buffer;
 		size_t idx = posCacheLine->m_index;
 
 		m_kernel.compute(idx, m_activeIndices, m_activeLength, column);
 
 		posCacheLine->m_validlen = m_activeLength;
-		END_PROF();
+		//END_PROF();
 	}
 
 
@@ -482,17 +524,20 @@ protected:
 
 				while (len + m_currentAllocSize > m_cacheSize && pos != m_cache.begin())
 				{
-					// reduce current allocation size
-					m_currentAllocSize -= pos->m_len * sizeof(KType);
+					if (!pos->m_lock)
+					{
+						// reduce current allocation size
+						m_currentAllocSize -= pos->m_len * sizeof(KType);
 
-					// Remove entry
-					pos = removeCacheEntry(pos);
-					
+						// Remove entry
+						pos = removeCacheEntry(pos);
+					}
+
 					// point to previous item instead of next
 					--pos;
 				}
 				
-				if (pos == NULLITEM)
+				if (pos == NULLITEM || len + m_currentAllocSize > m_cacheSize)
 					throw exception("Unable to allocate cache line, increase memory");
 
 				m_colIndices[pos->m_index] = NULLITEM;
