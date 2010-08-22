@@ -1,0 +1,5 @@
+LIBRARY	SimplexSVM.mexw64
+
+EXPORTS  
+	mexFunction
+	EntryFunction     
