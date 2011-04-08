@@ -65,6 +65,11 @@ private:
                   Array<double, 1>& uppperfcache,
 				  int& iter);
 
+	void gradientProjection(Array<double, 1>& alpha, 
+						    Array<double, 1>& fcache,
+							const Array<double, 1>& T,
+							double& beta, 
+							Array<double, 1>& upperfcache);
 
     int updateCacheStrategy(const int nWorkingSize, 
                              const Array<double, 1>& T,
@@ -101,7 +106,11 @@ private:
     Array<double, 2> m_RStorage;
     Array<double, 1> m_hS;
     Array<double, 1> m_etS;
-    Array<double, 1> m_qS;
+    Array<double, 1> m_qS;	
+
+	// Temporary storage for the gradient projetion method.
+	Array<double, 1> m_gp;
+	vector<int> m_gps;
 
 	// Temporary buffer for computing the error caches
 	double* m_kernelCacheBuffer;
