@@ -31,6 +31,30 @@ struct IndexCompare
     const T& m_arr;
 };
 
+template <typename T> 
+T sign(T t)  
+{ 
+    if( t == 0 ) 
+        return T(0); 
+    else 
+        return (t < 0) ? T(-1) : T(1); 
+} 
+
+template <typename T>
+T max(T& a, T& b)
+{
+	return a > b : a ? b;
+}
+
+double vmaxabs(Array<double,1>& a, vector<int>& idx)
+{
+	double maxval = 0.0;
+	for (int i = 0; i < idx.size(); i++)
+		maxval = max(maxval, abs(a(idx[i])));
+
+	return maxval;
+
+}
 
 SVM::SVM(KernelCache<double, float>& kernel, double C, double tol, ProxyStream& os)
 : m_kernel(kernel)
@@ -75,10 +99,11 @@ void SVM::train(const Array<double, 2>& P,
     m_hS.resize(fcache.shape());
     m_etS.resize(fcache.shape());
     m_qS.resize(fcache.shape());
-
+	
     m_RStorage.resize(STORAGE_NEW_INCREMENT, STORAGE_NEW_INCREMENT);
     m_R.reference(m_RStorage(Range(0,0), Range(0,0)));
 
+	m_gp.resize(fcache.shape());
 
     m_status.resize(fcache.shape());
 
@@ -127,6 +152,7 @@ void SVM::train(const Array<double, 2>& P,
     time_t ts = clock();
 	Profile.reset();
 
+	int cycles = 0;
 	while (min_g < -m_tol )
 
     {
@@ -139,10 +165,21 @@ void SVM::train(const Array<double, 2>& P,
 		m_os << infolevel(7) << "fcache = " << fcache << endl;
 
 		BEGIN_PROF("takeStep");
-
-        // Perform pivoting on the pivot element
-        takeStep(alpha, idx, fcache, T, beta, upperfcache, iter);
 		
+		if ((++cycles % 2) == 0)
+		{
+			gradientProjection(alpha, 
+							   fcache,
+							   T,
+							   beta, 
+							   upperfcache);
+		}
+		else
+		{
+			// Perform pivoting on the pivot element
+			takeStep(alpha, idx, fcache, T, beta, upperfcache, iter);
+		}
+
 		NEXT_PROF("Update Cache Strategy");
 
 		idx = updateCacheStrategy(working_size, 
@@ -599,6 +636,7 @@ void SVM::takeStep(Array<double, 1>& alpha,
 
 
 				const float* buffer = m_kernel.getColumnAndLock(idx);
+
                 // Update the upper bound cache
 				for (int k = 0; k < upperfcache.size(); k++)
                     upperfcache(k) -= buffer[k] * m_C;
@@ -703,6 +741,454 @@ void SVM::takeStep(Array<double, 1>& alpha,
 	END_PROF();
 }
 
+void SVM::gradientProjection(Array<double, 1>& alpha, 
+						     Array<double, 1>& fcache,
+							 const Array<double, 1>& T,
+							 double& beta, 
+							 Array<double, 1>& upperfcache)
+{
+
+	vector<int> I(fcache.size());
+	vector<int> d(fcache.size());
+
+	for (int i = 0; i < T.size(); i++)
+        I[i] = i;
+	
+    //
+    // Here, we borrow a methodology similar to that presented by Joachims.
+    // The steps are as follows:
+    //
+    for (int idx = 0; idx < fcache.size(); idx++)
+	{
+		m_gp(idx) = fcache(idx) * T(idx);
+		d[idx] = (int)sign(fcache(idx));
+	}
+
+    //
+    // Note that d = -1 for alpha = 0 and KKT violator
+    //           d =  1 for alpha = C and KKT violator
+    //
+	for (size_t idx = 0; idx < m_idxb.size(); idx++)
+	{
+		m_gp(m_idxb[idx]) *= -1;
+		d[m_idxb[idx]] *= -1;
+	}
+    
+	// Perform an ascending sort. The m_fcache_indices contain our data.
+	sort(I.begin(), 	     
+	     I.end(), 
+		 IndexCompare<Array<double,1> >(m_gp));
+
+
+    const int Ns = 500;    
+    
+	//
+    // Take pairs from the top/bottom such that d < 1 for alpha = 0 and d >
+    // 1 for alpha = C. We will search for no more than Ns pairs of points.
+    //     
+    size_t idxtop = 0;
+    size_t idxbottom = m_fcache_indices.size() - 1;
+    int idxfound = 0;
+
+	vector<double> adj(fcache.size());
+	vector<double> a1(fcache.size());
+
+    while (idxfound < Ns)
+	{               
+        while (((d[I[idxtop]] == 1 && m_status(I[idxtop]) == 0) || 
+               (d[I[idxtop]] == -1 && m_status(I[idxtop]) == 2) ||
+			   (m_status(I[idxtop]) == 1)) &&
+               m_gp(I[idxtop]) < 0)
+		{
+            idxtop = idxtop + 1;                       
+		}
+
+        if (m_gp(I[idxtop]) >= 0) 
+			break; 
+        
+        while (((d[I[idxbottom]] == 1 && m_status(I[idxbottom]) == 0) || 
+               (d[I[idxbottom]] == -1 && m_status(I[idxbottom]) == 2) ||
+			   (m_status(I[idxtop]) == 1)) && 
+                m_gp(I[idxbottom]) > 0)
+		{
+            idxbottom = idxbottom - 1;                       
+		}
+
+        if (m_gp(I[idxbottom]) <= 0) 
+			break; 
+        
+        // Determine if the pair will create a strictly decreasing objective
+        // idxs = [idxtop; idxbottom];
+        
+		vector<size_t> idxs(2);
+		idxs[0] = idxtop;
+		idxs[1] = idxbottom;
+
+        //
+        // Test to ensure the pair of points will provide a strict decrease
+        // in the objective function. The formula is as follows
+        // 
+        // d'*(Q_rs*alpha_s + Q_rc * alpha_c - 1_r - C*Q_rr*d) >= 0
+        //
+        // We observe that we can modify the formulas as follows:
+        //
+        // d'*(-d.*m_fcache + beta*y_r - C*Q_ss*d) >= 0 
+        // 
+        // where d_i = -1 if alpha_i = 0, d_i = 1 if alpha_i = C
+
+        //
+        // Note that we use -d based upon the definition applied, above.
+        //
+		double val = 0.0;
+		for (size_t k = 0; k < idxs.size(); ++k)
+		{
+			val += d[I[idxs[k]]] * (-d[I[idxs[k]]] * (fcache(I[idxs[k]]) + adj[I[idxs[k]]]) + beta * T(I[idxs[k]]) - 
+					0.5 * m_C * (m_kernel(I[idxs[k]], I[idxs[0]]) * d[I[idxs[0]]] + 
+					             m_kernel(I[idxs[k]], I[idxs[1]]) * d[I[idxs[1]]]));
+
+		}
+        
+        // Update the alpha value and fcache values  
+        if (val > 0)
+		{
+            
+            idxfound = idxfound + 1;
+			for (size_t k = 0; k < idxs.size(); ++k)
+			{
+				
+				if (m_status(I[idxs[k]]) == 2)
+				{
+					// Update variable type vectors
+					m_idxb.erase(remove(m_idxb.begin(), 
+										m_idxb.end(), 
+										I[idxs[k]]), 
+								 m_idxb.end());
+				}
+				else
+				{
+					m_idxb.push_back(I[idxs[k]]);
+				}
+
+				alpha(I[idxs[k]]) = m_C - alpha(I[idxs[k]]);
+				m_status(I[idxs[k]]) = 2 - m_status(I[idxs[k]]);
+			}
+
+			// Compute an update to the kernel caching
+            // adj = adj - Q(:,I(idxs)) * (-d(I(idxs)) * m_C);
+
+
+			for (int i = 0; i < a1.size(); i++)
+			{				
+				//a1 = Q(:,I(idxs)) * (-d(I(idxs)) * m_C);
+				for (size_t k = 0; k < idxs.size(); k++)
+				{
+					a1[i] = m_kernel(i, I[idxs[k]]) * -d[I[idxs[k]]] * m_C;
+
+				}
+
+                // a1(m_svtype==2) = -a1(m_svtype==2);
+				if (m_status(i) == 2)
+					a1[i] = -a1[i];
+
+		
+			}
+
+			for (int k = 0; k < idxs.size(); k++)
+			{
+
+				//a1(I(idxs)) = ((-2*(m_fcache(I(idxs))'+adj(I(idxs)))) + a1(I(idxs)));
+				a1[I[idxs[k]]] += -2 * (fcache(I[idxs[k]]) + adj[I[idxs[k]]]);
+			}
+
+			for (int i = 0; i < adj.size(); i++)
+			{
+				adj[i] += a1[i];
+			}
+
+		}
+
+        idxtop = idxtop + 1;
+        idxbottom = idxbottom - 1;        
+	}       
+
+	// Apply adjustments to upperfcache as well as fcache
+	for (int i = 0; i < fcache.size(); i++)
+	{
+		fcache(i) += adj[i];
+		upperfcache(i) += adj[i];
+	}
+
+	if (idxfound > 0)
+	{
+		double eps = 1e-15;
+		int N = T.size();
+
+		Array<double, 1> h = m_hS(Range(0, (int)m_idxnb.size() - 1)); 
+		double gb = 0.0;
+
+		for (int kidx = 0; kidx < h.size(); kidx++)
+			h(kidx) = 0.0;
+
+		// Find the indices for bound, non-bound support vectors. Note that 
+		// this, in reality, needs to be moved to another section.
+		Array<double, 1> rhs = m_qS(Range(0, (int)m_idxnb.size() - 1));
+
+		for (int i = 0; i < rhs.size(); i++)
+		{
+			rhs(i) = fcache(m_idxnb[i]);
+		}
+
+		m_os << infolevel(4) << "rhs = " << rhs << endl;
+
+		//
+		// Solve sub-problem
+		//
+		solveSubProblem(m_R, 
+						rhs,
+						0,
+						T,
+						h,
+						gb);
+
+	        
+
+		m_os << infolevel(4) << "Calculations for g, h" << endl;
+		m_os << infolevel(4) << "gb = " << gb << endl;
+		m_os << infolevel(4) << "ht = " << h << endl;
+
+
+        //
+        // Compute gamma. Note that we don't actually need the term
+        // for g(idx + 1) since this will be zero as idx represents
+        // a non-support vector and g is only non-zero for bound 
+        // support vectors (m_status == 2)
+        //
+		vector<double> gamma(m_idxnb.size());
+
+		//gamma = -Q(idx_nb,idx_nb) * h(idx_nb)' - gb * m_T(idx_nb)';
+		for (int i = 0; i < m_idxnb.size(); i++)
+		{
+			gamma[i] = -gb * T(m_idxnb[i]);
+			for (int j = 0; j < m_idxnb.size(); j++)
+			{
+				gamma[i] += m_kernel(m_idxnb[i], m_idxnb[j]) * h(j);
+			}
+		}
+        
+                  		
+		
+		while (vmaxabs(fcache, m_idxnb) > m_tol)
+		{
+			// 
+			// Search for the minimum theta. 
+			// Augment the h vector for non-bound support vectors        
+			//
+			double theta = 1e300;
+			int idxr = -1;
+			int idxh = -1;
+			int idxt = -1;
+
+
+			for (int i = 0; i < h.size(); i++)
+			{
+				//
+				// The first size() - 1 entries of the h-vector correspond to the 
+				// non-bound support vectors and the last entry corresponds to the
+				// h value for the variable entering the basis (passed to this function).
+				//
+				idxt = m_idxnb[i];
+
+				m_os << infolevel(6) << "idxt = " << idxt << endl;
+				m_os << infolevel(6) << "h(i) = " << h(i) << endl;
+
+				if (h(i) > 0)
+				{
+					double thetaTmp = alpha(idxt) / h(i);
+					if ( thetaTmp + eps < theta) 
+					{
+						m_os << infolevel(6) << "theta = thetaTmp = " << setprecision(12) << thetaTmp << endl;
+						m_os << infolevel(6) << "idxh = " << i << endl;
+						m_os << infolevel(6) << "idxr = " << idxt << endl;
+
+						theta = thetaTmp;
+
+						idxh = i;
+						idxr = idxt;
+					}
+				}
+				else if (-h(i) > 0)
+				{
+					double thetaTmp = (m_C - alpha(idxt) ) / -h(i);
+					if (thetaTmp + eps < theta)
+					{
+						m_os << infolevel(6) << "theta = thetaTmp = " << thetaTmp << endl;
+						m_os << infolevel(6) << "idxh = " << i << endl;
+						m_os << infolevel(6) << "idxr = " << idxt << endl;
+
+						theta = thetaTmp;
+						idxh = i;
+						idxr = idxt;
+					}
+				}
+			}
+
+			m_os << infolevel(2) << "theta = " << theta << endl;
+
+			double ratiomax = 0.0;
+			for (int i = 0; i < m_idxnb.size(); i++)
+				if (fcache(m_idxnb[i])/gamma[i] > ratiomax)
+					ratiomax = fcache(m_idxnb[i])/gamma[i];
+
+
+
+			// Note that we cannot use the "tol", here, for this decision, but a much tighter
+			// eps, otherwise cycling can occur. 
+			if ( (theta < ratiomax - eps))
+			{
+
+				m_os << infolevel(2) << "Value leaving basis: " << idxr << endl;
+
+				// a value is leaving the basis
+				beta = beta - theta * gb;
+
+				for (int k = 0; k < h.size(); k++)
+				{
+					alpha(m_idxnb[k]) = alpha(m_idxnb[k]) - theta * h(k);
+					fcache(m_idxnb[k]) = fcache(m_idxnb[k]) - theta * gamma[k];
+				}
+
+	               
+				m_os << infolevel(7) << "beta = " << beta << endl;
+				m_os << infolevel(7) << "alpha = " << alpha << endl;
+
+				// If we added to the bound set, that is we hit alpha = C.
+				if (-h(idxh) > 0)
+				{
+
+					m_idxb.push_back(idxr);
+					m_status(idxr) = 2;
+
+					const float* buffer = m_kernel.getColumnAndLock(idxr);
+
+					for (int k = 0; k < upperfcache.size(); k++)
+						upperfcache(k) += buffer[k] * m_C;
+
+					m_kernel.unlockColumn(idxr);
+
+				}
+				else
+				{
+					m_status(idxr) = 0;
+				}
+
+
+				//
+				// Now we need to find the item to remove from the basis
+				// as well as figure out a new factorization.
+				//
+				vector<int>::iterator vIter = 
+					find(m_idxnb.begin(), m_idxnb.end(), idxr);
+	            
+				int idx_pos = (int)(vIter - m_idxnb.begin());
+
+				m_os << "idx_pos = " << idx_pos << endl;
+
+				// 
+				// Update the factorization by removing the corresponding, row/column, from 
+				// the factorization. 
+				//
+				reduceCholFactor(T, idx_pos);
+
+				m_os << infolevel(20) << "Reduced Cholesky = " << endl;
+				m_os << infolevel(20) << m_R << endl;            
+
+				// Erase the value from the non-bound values
+				if (vIter != m_idxnb.end())
+				{
+					if (m_status(*vIter) == 1)
+						m_status(*vIter) = 0;
+
+					m_idxnb.erase(vIter);
+	               
+				}
+				else
+				{
+					m_os << warning() << "Invalid index removed" << endl;
+				}
+	           
+			}
+			else
+			{
+		
+				idxr = -1;
+				m_os << infolevel(2) << "Found minimum of objective." << endl;
+	           
+				theta = 1.0;
+	            
+				// a value is leaving the basis
+				beta = beta - theta * gb;
+
+				for (int k = 0; k < h.size(); k++)
+				{
+					alpha(m_idxnb[k]) = alpha(m_idxnb[k]) - theta * h(k);
+					fcache(m_idxnb[k]) = fcache(m_idxnb[k]) - gamma[k];
+				}
+	            
+
+				m_os << infolevel(7) << "beta = " << beta << endl;
+				m_os << infolevel(7) << "alpha = " << alpha << endl;
+	           
+			}           
+	  
+			//
+			// Now we need to drive the corresponding Lagrange to zero to force
+			// the complementary conditions
+			//
+			if (vmaxabs(fcache, m_idxnb) <= m_tol) 
+				break; 
+	        
+			h.reference(m_hS(Range(0, (int)m_idxnb.size() - 1)));
+	    
+			m_os << infolevel(2) << "~bSlack" << endl;           
+	        
+			// Solve sub-problem
+			Array<double, 1> et = m_etS(Range(0, h.size() - 1));
+
+			for (int i = 0; i < m_idxnb.size(); i++)
+			{
+				et(i) = fcache(m_idxnb[i]);
+			}
+
+			m_os << infolevel(4) << "et = " << et << endl;
+	       
+			solveSubProblem(m_R, 
+							et,
+							0,
+							T,
+							h,
+							gb);
+	        
+			m_os << infolevel(4) << "gb = " << gb << endl;
+			m_os << infolevel(4) << "h = " << h << endl;
+	                    
+			//gamma = -Q(idx_nb,idx_nb) * h(idx_nb)' - gb * m_T(idx_nb)';
+			for (int i = 0; i < m_idxnb.size(); i++)
+			{
+				gamma[i] = -gb * T(m_idxnb[i]);
+				for (int j = 0; j < m_idxnb.size(); j++)
+				{
+					gamma[i] += m_kernel(m_idxnb[i], m_idxnb[j]) * h(j);
+				}
+			}
+
+
+		} // while
+
+
+	}
+
+}
+
 
 int SVM::updateCacheStrategy(const int nWorkingSize, 
                              const Array<double, 1>& T,
@@ -719,6 +1205,7 @@ int SVM::updateCacheStrategy(const int nWorkingSize,
     {
 
 		reinitializeCache(fcache, upperfcache, T, alpha, beta);
+
 		//
 		// It is possible that the process of shrinking has removed a number
 		// of items from the cache list where the number of remaining points

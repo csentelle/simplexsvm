@@ -335,7 +335,7 @@ public:
 
 	}
 
-	// The user is allowed to force a cachee  of a column, where subsequently, 
+	// The user is allowed to force a cache of a column, where subsequently, 
 	// a call to getUnsafeCachedItems can be called. The getUnsafeCachedItems
 	// is used for fast access where it is assumed this is called first!
 	void updateColumn(size_t i)
@@ -385,7 +385,7 @@ protected:
 
 	inline KType getCachedItem(size_t i, size_t j)
 	{
-		assert(IsCached(i) && m_rowIndices[j] < m_activeLength);
+		assert(isCached(i) && m_rowIndices[j] < m_activeLength);
 		return m_colIndices[i]->m_buffer[m_rowIndices[j]];
 	}
 
