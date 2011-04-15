@@ -10,8 +10,8 @@
 #include "time.h"
 #include "stdlib.h"
 
-#undef PROFILE
-//#define PROFILE	&Profile
+//#undef PROFILE
+#define PROFILE	&Profile
 #include "hwprof.h"
 
 CHWProfile Profile; 
@@ -156,7 +156,7 @@ void SVM::train(const Array<double, 2>& P,
 	while (min_g < -m_tol )
 
     {
-               		
+        
         m_os << infolevel(1) << "iter = " << iter 
                              << " min_g = " << min_g 
 							 << " beta = " << beta
@@ -166,19 +166,19 @@ void SVM::train(const Array<double, 2>& P,
 
 		BEGIN_PROF("takeStep");
 		
-		if ((++cycles % 2) == 0)
-		{
-			gradientProjection(alpha, 
-							   fcache,
-							   T,
-							   beta, 
-							   upperfcache);
-		}
-		else
-		{
+		//if ((++cycles % 2) == 0)
+		//{
+		//	gradientProjection(alpha, 
+		//					   fcache,
+		//					   T,
+		//					   beta, 
+		//					   upperfcache);
+		//}
+		//else
+		//{
 			// Perform pivoting on the pivot element
 			takeStep(alpha, idx, fcache, T, beta, upperfcache, iter);
-		}
+		//}
 
 		NEXT_PROF("Update Cache Strategy");
 
@@ -259,7 +259,7 @@ void SVM::train(const Array<double, 2>& P,
 
             for (int i = 0; i < m_fcache_indices.size(); i++)
             {
-                //if (fcache(m_fcache_indices[i]) > m_tol)
+
 				
 				// Double checking that fcache > 0 prevents shrinking of non-bound
 				// SVs as well other data points that haven't been part of the
@@ -296,7 +296,7 @@ void SVM::train(const Array<double, 2>& P,
     }
 
 
-	//Profile.dumpprint(m_os, 0);
+	Profile.dumpprint(m_os, 0);
     t = ((double)clock() - (double)ts) / (double)CLOCKS_PER_SEC;
 
     // Compute B
