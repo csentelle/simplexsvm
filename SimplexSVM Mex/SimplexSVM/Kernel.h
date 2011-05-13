@@ -278,11 +278,9 @@ public:
 		m_activeLength = m_activeIndices.size();
 	}
 
-
-
 	void removeActiveIndex(size_t i)
 	{
-		BEGIN_PROF("REMOVE ACTIVE INDEX");
+		//BEGIN_PROF("REMOVE ACTIVE INDEX");
 		// Swap this item out with the last element in the list.
 		size_t idx1 = m_rowIndices[i];
 		size_t idx2 = m_activeLength-1;
@@ -297,17 +295,17 @@ public:
 			// Most likely the item has not been accessed for a while.
 			if ((*pos).m_len < m_activeLength)
 			{
-				BEGIN_PROF("REMOVE CACHE ENTRY");
+				//BEGIN_PROF("REMOVE CACHE ENTRY");
 				pos = removeCacheEntry(pos);
-				END_PROF();
+				//END_PROF();
 
 			}
 			else
 			{
-				BEGIN_PROF("SWAP DATA IN BUFFERS");
+				//BEGIN_PROF("SWAP DATA IN BUFFERS");
 				swapdata((*pos).m_buffer[idx1], (*pos).m_buffer[idx2]);
 				++pos;
-				END_PROF();
+				////END_PROF();
 			}
 		}
 
@@ -320,7 +318,7 @@ public:
 
 		// Reduce the length of the active indices
 		m_activeLength--;
-		END_PROF();
+		//END_PROF();
 	}
 
 	bool isCached(size_t i)

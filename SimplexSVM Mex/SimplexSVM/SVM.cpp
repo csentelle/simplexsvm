@@ -79,7 +79,8 @@ void SVM::train(const Array<double, 2>& P,
                 int& iter,
                 double& t,
                 int working_size,
-                int shrinking_iter)
+                int shrinking_iter,
+				bool bSBSVOEnable)
 {
 
 	Array<double, 1> fcache(T.size());
@@ -164,33 +165,44 @@ void SVM::train(const Array<double, 2>& P,
 
 		m_os << infolevel(7) << "fcache = " << fcache << endl;
 
-		BEGIN_PROF("takeStep");
-		
-		//if ((++cycles % 2) == 0)
-		//{
-		//	gradientProjection(alpha, 
-		//					   fcache,
-		//					   T,
-		//					   beta, 
-		//					   upperfcache);
-		//}
-		//else
-		//{
+		bool bUpdated = false;
+		if ((++cycles % 2) == 0 && bSBSVOEnable) 
+		{
+			BEGIN_PROF("gradientProjection");
+			bUpdated = 
+				gradientProjection(alpha, 
+								   fcache,
+								   T,
+								   beta, 
+								   upperfcache, iter);
+			END_PROF();
+
+			
+	    }
+		else
+		{
+			BEGIN_PROF("takeStep");
+
 			// Perform pivoting on the pivot element
 			takeStep(alpha, idx, fcache, T, beta, upperfcache, iter);
-		//}
+			bUpdated = true;
 
-		NEXT_PROF("Update Cache Strategy");
+			END_PROF();
+		}
 
-		idx = updateCacheStrategy(working_size, 
-								  T, 
-								  alpha, 
-								  beta, 
-								  fcache, 
-								  upperfcache, 
-								  min_g);
-        
-		END_PROF();
+		
+
+		if (bUpdated)
+		{
+			idx = updateCacheStrategy(working_size, 
+									  T, 
+									  alpha, 
+									  beta, 
+									  fcache, 
+									  upperfcache, 
+									  min_g);
+		}        
+	
 		
 		// 	If we appear to have hit the stopping criterion, then, proceed 
 		//  first with a reinitialization of a working set corresponding to the 
@@ -254,6 +266,7 @@ void SVM::train(const Array<double, 2>& P,
         {
 			
 			BEGIN_PROF("Shrinking");
+
 			// Make sure all entries have been updated, not just the working set
             reinitializeCache(fcache, upperfcache, T, alpha, beta);
 
@@ -349,7 +362,6 @@ void SVM::takeStep(Array<double, 1>& alpha,
 
     m_os << infolevel(4) << "m_status = " << m_status(idx) << endl;
 
-	BEGIN_PROF("TAKE STEP 1");
     if (m_status(idx) == 0)
     {    
 
@@ -434,7 +446,6 @@ void SVM::takeStep(Array<double, 1>& alpha,
        
     }
     
-	NEXT_PROF("TAKE STEP 2");
     bool bAddedIndex = false;
                 
     while (abs(fcache(idx)) > m_tol)
@@ -738,14 +749,13 @@ void SVM::takeStep(Array<double, 1>& alpha,
             
         } // 
     } // while
-	END_PROF();
 }
 
-void SVM::gradientProjection(Array<double, 1>& alpha, 
+bool SVM::gradientProjection(Array<double, 1>& alpha, 
 						     Array<double, 1>& fcache,
 							 const Array<double, 1>& T,
 							 double& beta, 
-							 Array<double, 1>& upperfcache)
+							 Array<double, 1>& upperfcache, int iter)
 {
 
 	vector<int> I(fcache.size());
@@ -754,10 +764,19 @@ void SVM::gradientProjection(Array<double, 1>& alpha,
 	for (int i = 0; i < T.size(); i++)
         I[i] = i;
 	
+	// MATLAB
+	// g = m_fcache;
+    // g(m_svtype==2) = -g(m_svtype==2);
+        
+    // d = sign(g); 
+    // g = g .* m_T';
+
     //
     // Here, we borrow a methodology similar to that presented by Joachims.
     // The steps are as follows:
     //
+
+	BEGIN_PROF("Form g, d");
     for (int idx = 0; idx < fcache.size(); idx++)
 	{
 		m_gp(idx) = fcache(idx) * T(idx);
@@ -770,31 +789,45 @@ void SVM::gradientProjection(Array<double, 1>& alpha,
     //
 	for (size_t idx = 0; idx < m_idxb.size(); idx++)
 	{
-		m_gp(m_idxb[idx]) *= -1;
-		d[m_idxb[idx]] *= -1;
+		m_gp(m_idxb[idx]) = -m_gp(m_idxb[idx]);
+		d[m_idxb[idx]] = -d[m_idxb[idx]];
 	}
+ 
+	// MATLAB
+	//[g,I] = sort(g,1,'ascend');
     
+	NEXT_PROF("Sort");
+
 	// Perform an ascending sort. The m_fcache_indices contain our data.
-	sort(I.begin(), 	     
+	sort(I.begin(), 
 	     I.end(), 
 		 IndexCompare<Array<double,1> >(m_gp));
 
+	NEXT_PROF("Initialize variables");
 
-    const int Ns = 500;    
-    
+    const int Ns = 10000000;    
+    const int NMiss = 10;
+
 	//
     // Take pairs from the top/bottom such that d < 1 for alpha = 0 and d >
     // 1 for alpha = C. We will search for no more than Ns pairs of points.
     //     
     size_t idxtop = 0;
     size_t idxbottom = m_fcache_indices.size() - 1;
+
     int idxfound = 0;
 
 	vector<double> adj(fcache.size());
 	vector<double> a1(fcache.size());
+	vector<int> check(fcache.size());
 
-    while (idxfound < Ns)
+	int numMiss = 0;
+
+	END_PROF();
+
+    while (idxfound < Ns && numMiss < NMiss)
 	{               
+		BEGIN_PROF("Indexing");
         while (((d[I[idxtop]] == 1 && m_status(I[idxtop]) == 0) || 
                (d[I[idxtop]] == -1 && m_status(I[idxtop]) == 2) ||
 			   (m_status(I[idxtop]) == 1)) &&
@@ -820,6 +853,8 @@ void SVM::gradientProjection(Array<double, 1>& alpha,
         // Determine if the pair will create a strictly decreasing objective
         // idxs = [idxtop; idxbottom];
         
+		NEXT_PROF("Computing Val");
+
 		vector<size_t> idxs(2);
 		idxs[0] = idxtop;
 		idxs[1] = idxbottom;
@@ -840,21 +875,29 @@ void SVM::gradientProjection(Array<double, 1>& alpha,
         // Note that we use -d based upon the definition applied, above.
         //
 		double val = 0.0;
-		for (size_t k = 0; k < idxs.size(); ++k)
-		{
-			val += d[I[idxs[k]]] * (-d[I[idxs[k]]] * (fcache(I[idxs[k]]) + adj[I[idxs[k]]]) + beta * T(I[idxs[k]]) - 
-					0.5 * m_C * (m_kernel(I[idxs[k]], I[idxs[0]]) * d[I[idxs[0]]] + 
-					             m_kernel(I[idxs[k]], I[idxs[1]]) * d[I[idxs[1]]]));
+		double kernval = m_kernel.getDirect(I[idxs[0]], I[idxs[1]]);
 
-		}
+		val = d[I[idxs[0]]] * (-d[I[idxs[0]]] * (fcache(I[idxs[0]]) + adj[I[idxs[0]]]) + beta * T(I[idxs[0]]) - 
+					0.5 * m_C * (m_kernel.getQss(I[idxs[0]]) * d[I[idxs[0]]] + 
+					             kernval * d[I[idxs[1]]])) + 
+			  d[I[idxs[1]]] * (-d[I[idxs[1]]] * (fcache(I[idxs[1]]) + adj[I[idxs[1]]]) + beta * T(I[idxs[1]]) - 
+					0.5 * m_C * (kernval * d[I[idxs[0]]] + 
+					             m_kernel.getQss(I[idxs[1]]) * d[I[idxs[1]]]));
         
+	//	m_os << infolevel(1) << "val = " << val << endl;
+
+		END_PROF();
+
         // Update the alpha value and fcache values  
         if (val > 0)
 		{
+
+			BEGIN_PROF("Updating values");
             
             idxfound = idxfound + 1;
 			for (size_t k = 0; k < idxs.size(); ++k)
 			{
+
 				
 				if (m_status(I[idxs[k]]) == 2)
 				{
@@ -869,57 +912,104 @@ void SVM::gradientProjection(Array<double, 1>& alpha,
 					m_idxb.push_back(I[idxs[k]]);
 				}
 
+				check[I[idxs[k]]] = 1;
 				alpha(I[idxs[k]]) = m_C - alpha(I[idxs[k]]);
 				m_status(I[idxs[k]]) = 2 - m_status(I[idxs[k]]);
+
+				
 			}
 
-			// Compute an update to the kernel caching
-            // adj = adj - Q(:,I(idxs)) * (-d(I(idxs)) * m_C);
+			NEXT_PROF("Updating a1 part 1 kernel part");
 
+			const float* buffer1 = m_kernel.getColumnAndLock(I[idxs[0]]);
+			const float* buffer2 = m_kernel.getColumnAndLock(I[idxs[1]]);
+
+			NEXT_PROF("Updating a1 part 1 after kernel");
+
+			//a1 = Q(:,I(idxs)) * (-d(I(idxs)) * m_C);
+			double d1 = -d[I[idxs[0]]];
+			double d2 = -d[I[idxs[1]]];
 
 			for (int i = 0; i < a1.size(); i++)
 			{				
-				//a1 = Q(:,I(idxs)) * (-d(I(idxs)) * m_C);
-				for (size_t k = 0; k < idxs.size(); k++)
-				{
-					a1[i] = m_kernel(i, I[idxs[k]]) * -d[I[idxs[k]]] * m_C;
+				
+				BEGIN_PROF("A1");
 
-				}
+				a1[i] = (buffer1[i] * d1 + buffer2[i] * d2)  * m_C;	
+	
+				// upperfcache = upperfcache + a1; 
+				upperfcache(i) += a1[i];
 
-                // a1(m_svtype==2) = -a1(m_svtype==2);
-				if (m_status(i) == 2)
-					a1[i] = -a1[i];
-
+				END_PROF();
 		
 			}
 
+			NEXT_PROF("A3");
+            // a1(m_svtype==2) = -a1(m_svtype==2);
+			for (int i = 0; i < m_idxb.size(); i++)
+				a1[m_idxb[i]] = -a1[m_idxb[i]];
+
+			NEXT_PROF("Updating a1 part 2");
+
+			//a1(I(idxs)) = ((-2*(m_fcache(I(idxs))'+adj(I(idxs)))) + a1(I(idxs)));
 			for (int k = 0; k < idxs.size(); k++)
 			{
-
-				//a1(I(idxs)) = ((-2*(m_fcache(I(idxs))'+adj(I(idxs)))) + a1(I(idxs)));
 				a1[I[idxs[k]]] += -2 * (fcache(I[idxs[k]]) + adj[I[idxs[k]]]);
 			}
+			
+			m_kernel.unlockColumn(I[idxs[0]]);
+			m_kernel.unlockColumn(I[idxs[1]]);
 
+			NEXT_PROF("Updating a1 part 3");
+
+			//adj = adj + a1;
 			for (int i = 0; i < adj.size(); i++)
 			{
 				adj[i] += a1[i];
 			}
-
+			
+			END_PROF();
+			numMiss = 0;
+		}
+		else
+		{
+			numMiss++;
 		}
 
+		
         idxtop = idxtop + 1;
         idxbottom = idxbottom - 1;        
 	}       
 
+	BEGIN_PROF("Update cache");
 	// Apply adjustments to upperfcache as well as fcache
 	for (int i = 0; i < fcache.size(); i++)
 	{
 		fcache(i) += adj[i];
-		upperfcache(i) += adj[i];
 	}
+	
+
+	NEXT_PROF("Fix complementary conditions");
 
 	if (idxfound > 0)
 	{
+
+		m_os << infolevel(1) << "Num Updates = " << idxfound << endl;
+		fixComplementaryCondition(alpha, fcache, T, beta, upperfcache);
+		
+	}
+
+	return idxfound > 0;
+
+	END_PROF();
+}
+
+void SVM::fixComplementaryCondition(Array<double, 1>& alpha, 
+						            Array<double, 1>& fcache,
+							        const Array<double, 1>& T,
+							        double& beta, 
+							        Array<double, 1>& upperfcache)
+{
 		double eps = 1e-15;
 		int N = T.size();
 
@@ -929,8 +1019,6 @@ void SVM::gradientProjection(Array<double, 1>& alpha,
 		for (int kidx = 0; kidx < h.size(); kidx++)
 			h(kidx) = 0.0;
 
-		// Find the indices for bound, non-bound support vectors. Note that 
-		// this, in reality, needs to be moved to another section.
 		Array<double, 1> rhs = m_qS(Range(0, (int)m_idxnb.size() - 1));
 
 		for (int i = 0; i < rhs.size(); i++)
@@ -950,8 +1038,7 @@ void SVM::gradientProjection(Array<double, 1>& alpha,
 						h,
 						gb);
 
-	        
-
+	       
 		m_os << infolevel(4) << "Calculations for g, h" << endl;
 		m_os << infolevel(4) << "gb = " << gb << endl;
 		m_os << infolevel(4) << "ht = " << h << endl;
@@ -1131,7 +1218,7 @@ void SVM::gradientProjection(Array<double, 1>& alpha,
 				for (int k = 0; k < h.size(); k++)
 				{
 					alpha(m_idxnb[k]) = alpha(m_idxnb[k]) - theta * h(k);
-					fcache(m_idxnb[k]) = fcache(m_idxnb[k]) - gamma[k];
+					fcache(m_idxnb[k]) = fcache(m_idxnb[k]) - theta * gamma[k];
 				}
 	            
 
@@ -1185,10 +1272,7 @@ void SVM::gradientProjection(Array<double, 1>& alpha,
 		} // while
 
 
-	}
-
 }
-
 
 int SVM::updateCacheStrategy(const int nWorkingSize, 
                              const Array<double, 1>& T,
