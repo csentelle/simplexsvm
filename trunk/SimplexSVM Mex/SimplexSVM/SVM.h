@@ -26,7 +26,8 @@ public:
                int& iter,
                double& t,
                int working_size,
-               int shrink_iter); 
+               int shrink_iter, 
+			   bool bSBSVOEnable); 
 
 private:
 
@@ -65,11 +66,17 @@ private:
                   Array<double, 1>& uppperfcache,
 				  int& iter);
 
-	void gradientProjection(Array<double, 1>& alpha, 
+	bool gradientProjection(Array<double, 1>& alpha, 
 						    Array<double, 1>& fcache,
 							const Array<double, 1>& T,
 							double& beta, 
-							Array<double, 1>& upperfcache);
+							Array<double, 1>& upperfcache, int iter);
+
+	void fixComplementaryCondition(Array<double, 1>& alpha, 
+						            Array<double, 1>& fcache,
+							        const Array<double, 1>& T,
+							        double& beta, 
+							        Array<double, 1>& upperfcache);
 
     int updateCacheStrategy(const int nWorkingSize, 
                              const Array<double, 1>& T,

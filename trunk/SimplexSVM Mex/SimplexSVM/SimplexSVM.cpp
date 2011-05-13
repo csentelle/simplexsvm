@@ -16,6 +16,7 @@ void SimplexSVM(ProxyStream& os,
                 double gamma,
                 int kernelType,
 				double tol, 
+				bool bSBSVOEnable, 
                 int verb,
                 int working_size,
                 int shrinking_iter,
@@ -63,7 +64,8 @@ void SimplexSVM(ProxyStream& os,
                              iter, 
                              t, 
                              working_size, 
-                             shrinking_iter);
+                             shrinking_iter, 
+							 bSBSVOEnable);
 
         delete kernelCache;
 		delete kernel;
@@ -81,13 +83,17 @@ void EntryFunction(ProxyStream& os,
                    const GenArrayList& inputList, 
                    GenArrayList& outputList)
 {
-	if(inputList.getNumberOfArrays() < 8 || inputList.getNumberOfArrays() > 9)
+
+	if (inputList.getNumberOfArrays() == 0)
+		throw exception("Usage: SimplexSVM P T C g ktype tol sbsvo work-size shrink-iter verb");
+
+	if(inputList.getNumberOfArrays() < 9 || inputList.getNumberOfArrays() > 10)
 		throw exception("Invalid number of arguments");
 
     int verb = 0;
-    if (inputList.getNumberOfArrays() == 9)
+    if (inputList.getNumberOfArrays() == 10)
     {
-        verb = (int)inputList[8].convertTo<double, 1>(9, "verb")(0);
+        verb = (int)inputList[9].convertTo<double, 1>(9, "verb")(0);
     }  
 
     Array<double, 1> alpha;
@@ -102,9 +108,10 @@ void EntryFunction(ProxyStream& os,
             inputList[3].convertTo<double, 1>(4, "g")(0),
             inputList[4].convertTo<int, 1>(5, "ktype")(0),
 			inputList[5].convertTo<double, 1>(6, "tol")(0),
+			inputList[6].convertTo<int, 1>(7, "sbsvo")(0),
             verb, 
-            inputList[6].convertTo<int, 1>(7, "working_size")(0),
-            inputList[7].convertTo<int, 1>(8, "shrink_iter")(0),
+            inputList[7].convertTo<int, 1>(7, "working_size")(0),
+            inputList[8].convertTo<int, 1>(8, "shrink_iter")(0),
             alpha,
             b,
             t,
