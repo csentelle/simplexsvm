@@ -14,7 +14,6 @@ global m_svtype;
 global m_R;
 global idx_b;
 global idx_nb;
-global eps;
 
 Q = zeros(length(T), length(T));
 
@@ -180,11 +179,11 @@ while (abs(m_fcache(idx)) > eps)
     t = [idxh, idxh2];
     idxr = t(idxr);
 
-    eps2 = 1e-12;
+    
     % Note that it is possible for theta to be 0. This occurs if h(i)
     % is zero for component of h corresponding to idx after the first
     % run through this loop.
-    if (((gamma >= -eps2) || (theta < m_fcache(idx)/ gamma - eps2))),
+    if (((gamma >= -eps) || (theta < m_fcache(idx)/ gamma - eps))),
 
 
         if (-h(idxr) > 0),
@@ -227,9 +226,11 @@ while (abs(m_fcache(idx)) > eps)
 
     %
     % Now we need to drive the corresponding Lagrange to zero to force
-    % the complementary conditions
+    % the complementary conditions. Added a condition to break if 
+    % the most recently removed index is the one we initially started
+    % with.
     %
-    if (abs(m_fcache(idx)) <= eps) break; end;
+    if (abs(m_fcache(idx)) <= eps || idxr == idx) break; end;
 
     h = zeros(size(m_T));
 

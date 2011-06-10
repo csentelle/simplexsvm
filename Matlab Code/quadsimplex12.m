@@ -74,12 +74,10 @@ function [alpha, b, iter, t, gcache, m] = quadsimplex12(P, T, C, ktype, lambda)
     [min_g, idx] = min(m_fcache);
     
     tic; 
-    eps = 1e-6;
+    eps = 1e-3;
 	while (min_g < -eps )
         
-        
-        iter = iter + 1;
-        
+                
         % Perform pivoting on the pivot element
         takeStep(idx);
 
@@ -327,11 +325,19 @@ function [h, g] = solveSub(Q, y, q, r)
     if (length(y) > 1)
         Z = [-y(1)*y(2:end); eye(length(y)-1)];
         hy = r*y(1);
+        
         rhs = Z'*(q-Q(:,1)*hy);
+        
+        
         hz = -m_R'\rhs;
         hz = m_R\hz;
+        
+        
         h = Z*hz;
+        
+        
         h(1) = h(1) + hy;
+        
         g = y(1)*(q(1) - Q(1,:)*h);
     else
         % Just solve the following
