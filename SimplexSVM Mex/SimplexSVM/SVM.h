@@ -27,7 +27,8 @@ public:
                double& t,
                int working_size,
                int shrink_iter, 
-			   bool bSBSVOEnable); 
+			   bool bSBSVOEnable,
+			   bool bCPath); 
 
 private:
 
@@ -44,6 +45,12 @@ private:
                             const Array<double, 1>& T,
 						    const Array<double, 1>& alpha,
 						    const double beta);
+
+	void updateNBCache(Array<double, 1>& fcache,
+					   Array<double, 1>& upperfcache,
+					   const Array<double, 1>& T,
+					   const Array<double, 1>& alpha,
+					   const double beta);
 
 	void reinitializeUpperCache(Array<double, 1>& upperfcache);
 
@@ -70,7 +77,8 @@ private:
 						    Array<double, 1>& fcache,
 							const Array<double, 1>& T,
 							double& beta, 
-							Array<double, 1>& upperfcache, int iter);
+							Array<double, 1>& upperfcache, 
+							int iter, double mu);
 
 	void fixComplementaryCondition(Array<double, 1>& alpha, 
 						            Array<double, 1>& fcache,
@@ -91,8 +99,8 @@ private:
 
     KernelCache<double, float>& m_kernel;
     ProxyStream& m_os;
-    const double m_C;
-	const double m_tol;
+    double m_C;
+	double m_tol;
 
     vector<int> m_idxnb;
     vector<int> m_idxb;

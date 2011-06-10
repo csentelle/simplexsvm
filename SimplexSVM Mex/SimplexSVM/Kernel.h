@@ -7,8 +7,8 @@ BZ_USING_NAMESPACE(blitz)
 #include <vector>
 using namespace std;
 
-#define PROFILE	&Profile
-//#undef PROFILE
+//#define PROFILE	&Profile
+#undef PROFILE
 #include "hwprof.h"
 
 extern CHWProfile Profile; 
