@@ -10,8 +10,8 @@
 #include "time.h"
 #include "stdlib.h"
 
-//#undef PROFILE
-#define PROFILE	&Profile
+#undef PROFILE
+//#define PROFILE	&Profile
 #include "hwprof.h"
 
 CHWProfile Profile; 
@@ -80,7 +80,8 @@ void SVM::train(const Array<double, 2>& P,
                 double& t,
                 int working_size,
                 int shrinking_iter,
-				bool bSBSVOEnable)
+				bool bSBSVOEnable,
+				bool bCPath)
 {
 
 	Array<double, 1> fcache(T.size());
@@ -150,11 +151,19 @@ void SVM::train(const Array<double, 2>& P,
 
 
     iter = 0;
-    time_t ts = clock();
 	Profile.reset();
 
+	double COrig = m_C;
+
+	if (bCPath)
+	{
+		m_C = pow(double(2),double(-15));
+	}
+
+	time_t ts = clock();
+
 	int cycles = 0;
-	while (min_g < -m_tol )
+	while (min_g < -m_tol || m_C < COrig)
 
     {
         
@@ -174,12 +183,12 @@ void SVM::train(const Array<double, 2>& P,
 								   fcache,
 								   T,
 								   beta, 
-								   upperfcache, iter);
+								   upperfcache, iter, 0*m_C*1000/(cycles));
 			END_PROF();
 
 			
 	    }
-		else
+		else if (min_g < -m_tol)
 		{
 			BEGIN_PROF("takeStep");
 
@@ -203,6 +212,48 @@ void SVM::train(const Array<double, 2>& P,
 									  min_g);
 		}        
 	
+		BEGIN_PROF("Updating C");
+		if ( bCPath && min_g > -m_tol)
+		{
+            double pC = m_C;
+            m_C = min(m_C * 2, COrig);
+            
+			// Scale the set of bound support vectors
+			for (int i = 0; i < m_idxb.size(); i++)
+				alpha(m_idxb[i]) = m_C;
+
+			// Scale the set of non-bound support vectors
+			for (int i = 0; i < m_idxnb.size(); i++)
+				alpha(m_idxnb[i]) = alpha(m_idxnb[i]) * m_C/pC;
+
+			// Update the upper cache
+			for (int i = 0; i < upperfcache.size(); i++)
+				upperfcache(i) = upperfcache(i) * m_C / pC;
+            
+			updateNBCache(fcache,
+					      upperfcache,
+						  T,
+					      alpha,
+					      beta);
+   
+			// Fix the complementary condition
+			fixComplementaryCondition(alpha, fcache, T, beta, upperfcache);
+            
+            //updateCache();
+			idx = updateCacheStrategy(working_size, 
+                                      T, 
+                                      alpha, 
+                                      beta, 
+									  fcache, 
+									  upperfcache, 
+									  min_g);
+
+			m_os << infolevel(1) << "new C value = " << m_C << endl;
+            
+	   }
+	   END_PROF();
+
+
 		
 		// 	If we appear to have hit the stopping criterion, then, proceed 
 		//  first with a reinitialization of a working set corresponding to the 
@@ -309,8 +360,8 @@ void SVM::train(const Array<double, 2>& P,
     }
 
 
-	Profile.dumpprint(m_os, 0);
     t = ((double)clock() - (double)ts) / (double)CLOCKS_PER_SEC;
+	Profile.dumpprint(m_os, 0);
 
     // Compute B
     // We are computing B according to:    
@@ -755,7 +806,7 @@ bool SVM::gradientProjection(Array<double, 1>& alpha,
 						     Array<double, 1>& fcache,
 							 const Array<double, 1>& T,
 							 double& beta, 
-							 Array<double, 1>& upperfcache, int iter)
+							 Array<double, 1>& upperfcache, int iter, double mu)
 {
 
 	vector<int> I(fcache.size());
@@ -779,8 +830,7 @@ bool SVM::gradientProjection(Array<double, 1>& alpha,
 	BEGIN_PROF("Form g, d");
     for (int idx = 0; idx < fcache.size(); idx++)
 	{
-		m_gp(idx) = fcache(idx) * T(idx);
-		d[idx] = (int)sign(fcache(idx));
+		m_gp(idx) = fcache(idx);
 	}
 
     //
@@ -790,9 +840,13 @@ bool SVM::gradientProjection(Array<double, 1>& alpha,
 	for (size_t idx = 0; idx < m_idxb.size(); idx++)
 	{
 		m_gp(m_idxb[idx]) = -m_gp(m_idxb[idx]);
-		d[m_idxb[idx]] = -d[m_idxb[idx]];
 	}
  
+	for (int idx = 0; idx < fcache.size(); idx++)
+	{
+		m_gp(idx) = m_gp(idx) + T(idx) * beta;
+		d[idx] = (int)sign(m_gp(idx));
+	}
 	// MATLAB
 	//[g,I] = sort(g,1,'ascend');
     
@@ -889,7 +943,7 @@ bool SVM::gradientProjection(Array<double, 1>& alpha,
 		END_PROF();
 
         // Update the alpha value and fcache values  
-        if (val > 0)
+        if (val + mu > 0)
 		{
 
 			BEGIN_PROF("Updating values");
@@ -1396,7 +1450,30 @@ void SVM::reinitializeUpperCache(Array<double, 1>& upperfcache)
 	END_PROF();
 }
 
+void SVM::updateNBCache(Array<double, 1>& fcache,
+					   Array<double, 1>& upperfcache,
+					   const Array<double, 1>& T,
+					   const Array<double, 1>& alpha,
+					   const double beta)
+{
+	vector<const float*> vctr(m_idxnb.size());
+	for (size_t k = 0; k < m_idxnb.size(); k++)
+		vctr[k] = m_kernel.getColumnAndLock(m_idxnb[k]);
 
+
+	for (int i = 0; i < m_idxnb.size(); i++)
+	{
+		fcache(m_idxnb[i]) = -1 - T(m_idxnb[i]) * beta + upperfcache(m_idxnb[i]);
+		for (int k = 0; k < m_idxnb.size(); k++)
+		{
+			fcache(m_idxnb[i]) += vctr[k][m_idxnb[i]] * alpha(m_idxnb[k]);
+		}
+	}
+    
+
+	m_kernel.unlockAllColumns();
+
+}
 void SVM::reinitializeCache(Array<double, 1>& fcache,
                             Array<double, 1>& upperfcache,
                             const Array<double, 1>& T,
