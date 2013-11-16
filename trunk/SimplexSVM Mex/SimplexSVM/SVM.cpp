@@ -10,8 +10,8 @@
 #include "time.h"
 #include "stdlib.h"
 
-#undef PROFILE
-//#define PROFILE	&Profile
+//#undef PROFILE
+#define PROFILE	&Profile
 #include "hwprof.h"
 
 CHWProfile Profile; 
@@ -81,11 +81,14 @@ void SVM::train(const Array<double, 2>& P,
                 int working_size,
                 int shrinking_iter,
 				bool bSBSVOEnable,
-				bool bCPath)
+				bool bCPath,
+				double pathtol)
 {
 
 	Array<double, 1> fcache(T.size());
     Array<double, 1> upperfcache(T.size());
+	Array<double, 1> fcache2(T.size());
+	Array<double, 1> upperfcache2(T.size());
 
 	double beta = 0.0;
 
@@ -163,7 +166,7 @@ void SVM::train(const Array<double, 2>& P,
 	time_t ts = clock();
 
 	int cycles = 0;
-	while (min_g < -m_tol || m_C < COrig)
+	while (iter < 10000000000 && (min_g < -m_tol || m_C < COrig))
 
     {
         
@@ -172,10 +175,11 @@ void SVM::train(const Array<double, 2>& P,
 							 << " beta = " << beta
                              << " idx = " << idx << endl;
 
+
 		m_os << infolevel(7) << "fcache = " << fcache << endl;
 
 		bool bUpdated = false;
-		if ((++cycles % 2) == 0 && bSBSVOEnable) 
+		if ((++cycles % 10) == 0 && bSBSVOEnable) 
 		{
 			BEGIN_PROF("gradientProjection");
 			bUpdated = 
@@ -210,14 +214,29 @@ void SVM::train(const Array<double, 2>& P,
 									  fcache, 
 									  upperfcache, 
 									  min_g);
+
+			 //if (iter > 1850)
+			 //{
+				// reinitializeUpperCache(upperfcache2);
+				// reinitializeCache(fcache2, upperfcache2, T, alpha, beta);
+				// m_os << infolevel(0) << "err = " << max(abs(fcache2 - fcache)) << endl;
+			 //}
 		}        
 	
 		BEGIN_PROF("Updating C");
-		if ( bCPath && min_g > -m_tol)
+		if ( bCPath && min_g > -m_tol && m_C < COrig)
 		{
             double pC = m_C;
-            m_C = min(m_C * 2, COrig);
-            
+			m_C = findNextRegularizationValue(alpha, 
+							                  T,
+									          m_C,
+											  pathtol,
+											  fcache,
+							                  upperfcache);
+
+            m_C = min(m_C, COrig);
+
+
 			// Scale the set of bound support vectors
 			for (int i = 0; i < m_idxb.size(); i++)
 				alpha(m_idxb[i]) = m_C;
@@ -248,7 +267,7 @@ void SVM::train(const Array<double, 2>& P,
 									  upperfcache, 
 									  min_g);
 
-			m_os << infolevel(1) << "new C value = " << m_C << endl;
+			m_os << infolevel(0) << "New C value = " << m_C << endl;
             
 	   }
 	   END_PROF();
@@ -564,7 +583,8 @@ void SVM::takeStep(Array<double, 1>& alpha,
 
 		// Note that we cannot use the "tol", here, for this decision, but a much tighter
 		// eps, otherwise cycling can occur. 
-		if ( (gamma > -eps) || (theta < fcache(idx)/ gamma - eps))
+		//if ( (gamma > -eps) || (theta < fcache(idx)/ gamma - eps))
+		if ( (gamma > 0) || (theta < fcache(idx)/ gamma))
         {
 
             m_os << infolevel(2) << "Value leaving basis: " << idxr << endl;
@@ -846,6 +866,8 @@ bool SVM::gradientProjection(Array<double, 1>& alpha,
 	{
 		m_gp(idx) = m_gp(idx) + T(idx) * beta;
 		d[idx] = (int)sign(m_gp(idx));
+		m_gp(idx) = m_gp(idx) * T(idx);
+
 	}
 	// MATLAB
 	//[g,I] = sort(g,1,'ascend');
@@ -860,7 +882,7 @@ bool SVM::gradientProjection(Array<double, 1>& alpha,
 	NEXT_PROF("Initialize variables");
 
     const int Ns = 10000000;    
-    const int NMiss = 10;
+    const int NMiss = 100;
 
 	//
     // Take pairs from the top/bottom such that d < 1 for alpha = 0 and d >
@@ -1328,6 +1350,107 @@ void SVM::fixComplementaryCondition(Array<double, 1>& alpha,
 
 }
 
+double SVM::findNextRegularizationValue(Array<double, 1>& alpha, 
+							           const Array<double, 1>& T,
+									   double C,
+									   double pathtol,
+									   Array<double, 1>& fcache,
+							           Array<double, 1>& upperfcache)
+
+{
+	double eps = 1e-15;
+	int N = T.size();
+
+	Array<double, 1> h = m_hS(Range(0, (int)m_idxnb.size() - 1)); 
+	Array<double, 1> rhs = m_qS(Range(0, (int)m_idxnb.size() - 1));
+	double gb = 0.0;
+
+	for (int i = 0; i < h.size(); ++i) 
+	{
+		h(i) = 0.0;
+	}
+
+	for (int i = 0; i < rhs.size(); ++i)
+	{
+		rhs(i) = -upperfcache(m_idxnb[i])/C;
+	}
+
+	double sumTc = 0.0;
+	for (int i = 0; i < m_idxb.size(); ++i)
+	{
+		sumTc += T(m_idxb[i]);
+	}
+
+
+	//
+	// Solve sub-problem
+	//
+	solveSubProblem(m_R, 
+					rhs,
+					-sumTc,
+					T,
+					h,
+					gb);
+
+
+
+
+	int dbg = abs(C - 42.3273) < 1e-3;
+
+	double CP = 1e300;
+	for (int i = 0; i < h.size(); ++i)
+	{
+		if (h(i) > 1)
+		{
+			double val = (alpha(m_idxnb[i])-pathtol-C*h(i))/(1-h(i));
+			CP = min(CP, val);
+			if (dbg)
+				m_os << infolevel(0) << "i = " << m_idxnb[i] << " alpha = " << alpha(m_idxnb[i]) << " h = " <<  h(i) << " val = " << val << endl;
+		}
+		else if (h(i) < 0)
+		{
+			double val = (-pathtol + C* h(i) - alpha(m_idxnb[i]))/h(i);
+			CP = min(CP, val);
+		    if (dbg)
+				m_os << infolevel(0) << "i = " << m_idxnb[i] << " alpha = " << alpha(m_idxnb[i]) << " h = " <<  h(i) << " val = " << val << endl;
+
+		}
+	}
+
+	m_os << infolevel(0) << "CP1 = " << CP << endl;
+	
+	for (int i = 0; i < N; ++i)
+	{
+		double fh = 0.0;
+		double prodval = 0.0;
+		if (fcache(i) > 0 && m_status(i) != 1)
+		{
+			for (int k = 0; k < m_idxnb.size(); k++)
+			{
+				prodval += m_kernel(m_idxnb[k], i) * h(k);
+			}
+
+			fh = gb*T(i) - prodval - upperfcache(i)/C;
+
+			if (m_status(i) == 0)
+			{
+				fh = -fh;
+			}
+			
+			if (fh < 0)
+			{
+				CP = min(CP, (C*fh - fcache(i) - pathtol)/fh);
+			}
+		}
+	}
+
+	m_os << infolevel(0) << "CP2 = " << CP << endl;
+
+    CP = max(CP,C+1e-6);
+    
+	return CP;
+}
+
 int SVM::updateCacheStrategy(const int nWorkingSize, 
                              const Array<double, 1>& T,
                              const Array<double, 1>& alpha, 
@@ -1474,6 +1597,7 @@ void SVM::updateNBCache(Array<double, 1>& fcache,
 	m_kernel.unlockAllColumns();
 
 }
+
 void SVM::reinitializeCache(Array<double, 1>& fcache,
                             Array<double, 1>& upperfcache,
                             const Array<double, 1>& T,
