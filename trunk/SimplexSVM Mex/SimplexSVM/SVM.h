@@ -28,7 +28,8 @@ public:
                int working_size,
                int shrink_iter, 
 			   bool bSBSVOEnable,
-			   bool bCPath); 
+			   bool bCPath,
+			   double pathtol); 
 
 private:
 
@@ -85,6 +86,13 @@ private:
 							        const Array<double, 1>& T,
 							        double& beta, 
 							        Array<double, 1>& upperfcache);
+
+	double findNextRegularizationValue(Array<double, 1>& alpha, 
+							           const Array<double, 1>& T,
+									   double C,
+									   double pathtol,
+									   Array<double, 1>& fcache,
+							           Array<double, 1>& upperfcache);
 
     int updateCacheStrategy(const int nWorkingSize, 
                              const Array<double, 1>& T,
