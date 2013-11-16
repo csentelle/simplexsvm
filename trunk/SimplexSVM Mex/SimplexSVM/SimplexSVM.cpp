@@ -15,7 +15,8 @@ void SimplexSVM(ProxyStream& os,
                 double c,
                 double gamma,
                 int kernelType,
-				double tol, 
+				double tol,
+				double pathtol,
 				bool bSBSVOEnable, 
 				bool bCPathEnable,
                 int verb,
@@ -67,7 +68,7 @@ void SimplexSVM(ProxyStream& os,
                              working_size, 
                              shrinking_iter, 
 							 bSBSVOEnable,
-							 bCPathEnable);
+							 bCPathEnable, pathtol);
 
         delete kernelCache;
 		delete kernel;
@@ -110,7 +111,8 @@ void EntryFunction(ProxyStream& os,
             inputList[3].convertTo<double, 1>(4, "g")(0),
             inputList[4].convertTo<int, 1>(5, "ktype")(0),
 			inputList[5].convertTo<double, 1>(6, "tol")(0),
-			inputList[6].convertTo<int, 1>(7, "sbsvo")(0),
+			inputList[6].convertTo<double, 1>(7, "pathtol")(0),
+			0,
 			inputList[7].convertTo<int, 1>(8, "cpath")(0),
             verb, 
             inputList[8].convertTo<int, 1>(9, "working_size")(0),
