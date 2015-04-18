@@ -1,0 +1,3 @@
+This is an implementation of an algorithm for SVM training which uses an inertia controlling method. The inertia controlling method is an active set method which controls the number of non-positive eigenvalues of the reduced Hessian solved during each iteration. This particular implementation is based upon a revised simplex method first introduced by Rusin in 1971. Details of this project can be found in the publication:
+
+Sentelle, et al., "An Active Set Method for SVM Training without Singularities.", IJCNN, Atlanta, GA, 2009.
